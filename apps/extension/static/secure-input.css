@@ -1,0 +1,48 @@
+:root {
+  color-scheme: light dark;
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+}
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+main {
+  padding: 24px;
+}
+h1 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+p {
+  opacity: 0.7;
+}
+label {
+  display: block;
+  margin: 18px 0 6px;
+  font-weight: 600;
+}
+input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  background: Canvas;
+  color: inherit;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+button {
+  padding: 7px 12px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  background: color-mix(in srgb, CanvasText 7%, Canvas);
+  color: inherit;
+}

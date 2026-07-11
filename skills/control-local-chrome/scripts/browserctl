@@ -1,0 +1,18 @@
+#!/bin/sh
+
+set -u
+
+if [ -n "${BROWSERCTL_BIN:-}" ]; then
+  browserctl_bin=$BROWSERCTL_BIN
+elif [ -x "$HOME/Library/Application Support/browser-control/bin/browserctl" ]; then
+  browserctl_bin="$HOME/Library/Application Support/browser-control/bin/browserctl"
+else
+  browserctl_bin=browserctl
+fi
+
+if ! command -v "$browserctl_bin" >/dev/null 2>&1; then
+  printf '%s\n' '{"ok":false,"error":{"code":"BROWSERCTL_NOT_FOUND","message":"The installed browserctl executable was not found.","remediation":"Install browser-control and ensure browserctl is on PATH, or set BROWSERCTL_BIN to its absolute executable path."}}'
+  exit 127
+fi
+
+exec "$browserctl_bin" --json "$@"

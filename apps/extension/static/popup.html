@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local Chrome Control</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <span id="connection-dot" class="dot"></span>
+      <div>
+        <strong>Local Chrome Control</strong
+        ><small id="connection-label">Connecting…</small>
+      </div>
+    </header>
+    <main>
+      <section>
+        <div class="section-title">
+          <span>Controlled tabs</span
+          ><span id="tab-count" class="badge">0</span>
+        </div>
+        <div id="claimed-tabs" class="empty">No tabs are controlled.</div>
+      </section>
+      <section>
+        <div class="section-title">
+          <span>Confirmations</span
+          ><span id="confirmation-count" class="badge">0</span>
+        </div>
+        <div id="confirmations" class="empty">
+          Nothing is waiting for approval.
+        </div>
+      </section>
+    </main>
+    <footer>
+      <button id="stop-all" class="danger">Stop all control</button>
+    </footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Secure input</title>
+    <link rel="stylesheet" href="secure-input.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Secure input</h1>
+      <p id="description">
+        Enter the requested value. It is sent directly to the selected page and
+        is never returned to the AI.
+      </p>
+      <form id="form">
+        <label id="field-label" for="value">Value</label
+        ><input id="value" autocomplete="off" required />
+        <div class="actions">
+          <button type="button" id="cancel">Cancel</button
+          ><button type="submit">Fill securely</button>
+        </div>
+      </form>
+    </main>
+    <script type="module" src="secure-input.js"></script>
+  </body>
+</html>

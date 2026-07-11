@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- browser-control-install-v1 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@@LABEL@@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@@BROWSERD@@</string>
+    <string>--state-dir</string>
+    <string>@@STATE_DIR@@</string>
+    <string>--socket</string>
+    <string>@@SOCKET@@</string>
+    <string>--bridge-socket</string>
+    <string>@@BRIDGE_SOCKET@@</string>
+    <string>--bridge-token-file</string>
+    <string>@@BRIDGE_TOKEN_FILE@@</string>
+    <string>--artifact-dir</string>
+    <string>@@ARTIFACT_DIR@@</string>
+@@UPLOAD_ROOT_ARGUMENTS@@
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>@@HOME@@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+  <key>StandardOutPath</key>
+  <string>@@STDOUT_LOG@@</string>
+  <key>StandardErrorPath</key>
+  <string>@@STDERR_LOG@@</string>
+</dict>
+</plist>

@@ -1,0 +1,106 @@
+:root {
+  color-scheme: light dark;
+  font:
+    13px/1.4 system-ui,
+    sans-serif;
+}
+body {
+  width: 360px;
+  margin: 0;
+  color: CanvasText;
+  background: Canvas;
+}
+header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+}
+header div {
+  display: flex;
+  flex-direction: column;
+}
+small {
+  opacity: 0.65;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d97706;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #d97706 20%, transparent);
+}
+.dot.connected {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #16a34a 20%, transparent);
+}
+main {
+  max-height: 430px;
+  overflow: auto;
+}
+section {
+  padding: 12px 16px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+}
+.section-title {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.badge {
+  min-width: 20px;
+  text-align: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+}
+.item {
+  padding: 9px 0;
+  border-top: 1px solid color-mix(in srgb, CanvasText 8%, transparent);
+}
+.item:first-child {
+  border-top: 0;
+}
+.item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.item-detail {
+  margin: 3px 0 7px;
+  opacity: 0.65;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+}
+button {
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, CanvasText 6%, Canvas);
+  color: inherit;
+  cursor: pointer;
+}
+button:hover {
+  background: color-mix(in srgb, CanvasText 12%, Canvas);
+}
+.danger {
+  color: #dc2626;
+  border-color: color-mix(in srgb, #dc2626 45%, transparent);
+  width: 100%;
+}
+.approve {
+  color: #15803d;
+}
+.empty {
+  opacity: 0.55;
+  padding: 7px 0;
+}
+footer {
+  padding: 12px 16px;
+}

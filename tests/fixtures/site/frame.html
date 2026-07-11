@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Frame fixture</title>
+  </head>
+  <body>
+    <h1>Frame <span id="level"></span></h1>
+    <label>Frame input <input name="frame-value" /></label>
+    <button type="button">Set frame value</button>
+    <output aria-live="polite"></output>
+    <iframe id="nested" title="Nested frame"></iframe>
+    <script type="module">
+      const level = Number(location.pathname.split("/").at(-1)) || 1;
+      document.querySelector("#level").textContent = String(level);
+      document.querySelector("button").addEventListener("click", () => {
+        document.querySelector("output").textContent = document.querySelector("input").value;
+      });
+      if (level < 3) {
+        const otherPort = level % 2 === 0 ? Number(location.port) - 1 : Number(location.port) + 1;
+        document.querySelector("#nested").src = `${location.protocol}//${location.hostname}:${otherPort}/frame/${level + 1}`;
+      } else {
+        document.querySelector("#nested").remove();
+      }
+    </script>
+  </body>
+</html>

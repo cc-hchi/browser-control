@@ -1,0 +1,12 @@
+.DS_Store
+.idea/
+.vscode/
+
+bin/
+dist/
+coverage/
+node_modules/
+*.log
+
+.browser-control/
+artifacts/

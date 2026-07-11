@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Local Chrome Control",
+  "description": "A local, user-controlled execution runtime for AI clients.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "125",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk8ZgSMxOQ+gh4zMRZ2UOr2qbPFMaDOdK6EgOZz4O02GuKpGO7n6YxgezbJX3ISJtZEuy2uaJxMJie37lA37iHzQjxBz2yI4b/H/tryBGTtLX4fvhqWrTGjTSL1ulHyB40PkFreo1IWKiUVU5HRxFkZ2CHxNF7/Y5Y4SbYXvLjzpC+yzBGv8zVim3dEMKXHbvfFBZXR3QoemT3w/mNs9dTPUyGO80BrPQKxfteJUK7E/ZxqdOQ7CV+MPQ7dP350tu/RTgr4HLdcDNteTwyebFwtrF0tKoJag744Bkgrd0ES8Gw9wv3ThOZm4QtPuzHjYqwtSslTKqTCWoNIozgkdVsQIDAQAB",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Local Chrome Control",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "clipboardRead",
+    "clipboardWrite",
+    "debugger",
+    "downloads",
+    "history",
+    "nativeMessaging",
+    "offscreen",
+    "scripting",
+    "storage",
+    "tabs",
+    "tabGroups",
+    "webNavigation"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://browser-control.local/schema/protocol.json",
+  "title": "browser-control protocol",
+  "oneOf": [
+    { "$ref": "#/$defs/JsonRpcRequest" },
+    { "$ref": "#/$defs/JsonRpcNotification" },
+    { "$ref": "#/$defs/JsonRpcSuccess" },
+    { "$ref": "#/$defs/JsonRpcFailure" }
+  ],
+  "$defs": {
+    "Id": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "integer" }
+      ]
+    },
+    "JsonRpcRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/Id" },
+        "method": { "type": "string", "minLength": 1 },
+        "params": {}
+      }
+    },
+    "JsonRpcNotification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "method"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "type": "string", "minLength": 1 },
+        "params": {}
+      }
+    },
+    "JsonRpcSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "result"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/Id" },
+        "result": {}
+      }
+    },
+    "JsonRpcFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "error"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/Id" },
+        "error": { "$ref": "#/$defs/Error" }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "data"],
+      "properties": {
+        "code": { "type": "integer" },
+        "message": { "type": "string" },
+        "data": {
+          "type": "object",
+          "required": ["kind", "retryable", "effect"],
+          "properties": {
+            "kind": { "type": "string" },
+            "retryable": { "type": "boolean" },
+            "effect": { "enum": ["none", "possible", "confirmed"] },
+            "operationId": { "type": "string" },
+            "sessionId": { "type": "string" },
+            "tabId": { "type": "string" },
+            "expectedDocumentEpoch": { "type": "integer", "minimum": 0 },
+            "actualDocumentEpoch": { "type": "integer", "minimum": 0 },
+            "recovery": {
+              "type": "object",
+              "properties": {
+                "method": { "type": "string" },
+                "reason": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "SessionRef": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": {
+        "sessionId": { "type": "string", "pattern": "^ses_" }
+      }
+    },
+    "ClaimedTabRef": {
+      "allOf": [
+        { "$ref": "#/$defs/SessionRef" },
+        {
+          "type": "object",
+          "required": ["tabId", "leaseId"],
+          "properties": {
+            "tabId": { "type": "string", "pattern": "^tab_" },
+            "leaseId": { "type": "string", "pattern": "^lease_" }
+          }
+        }
+      ]
+    },
+    "Locator": {
+      "type": "object",
+      "required": ["by"],
+      "properties": {
+        "by": {
+          "enum": ["role", "text", "label", "placeholder", "testId", "css"]
+        },
+        "value": { "type": "string" },
+        "role": { "type": "string" },
+        "name": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "required": ["text"],
+              "properties": {
+                "text": { "type": "string" },
+                "exact": { "type": "boolean" }
+              }
+            }
+          ]
+        },
+        "exact": { "type": "boolean" },
+        "framePath": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Locator" }
+        },
+        "scope": { "$ref": "#/$defs/Locator" },
+        "has": { "$ref": "#/$defs/Locator" },
+        "hasText": { "type": "string" },
+        "and": { "$ref": "#/$defs/Locator" },
+        "or": { "$ref": "#/$defs/Locator" },
+        "index": { "type": "integer", "minimum": 0 },
+        "nth": { "type": "integer" },
+        "first": { "type": "boolean" },
+        "last": { "type": "boolean" },
+        "shadow": { "enum": ["auto", "none"] }
+      }
+    },
+    "Target": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["locator"],
+          "properties": { "locator": { "$ref": "#/$defs/Locator" } }
+        },
+        {
+          "type": "object",
+          "required": ["snapshotId", "nodeRef"],
+          "properties": {
+            "snapshotId": { "type": "string", "pattern": "^snap_" },
+            "nodeRef": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["snapshotId", "point"],
+          "properties": {
+            "snapshotId": { "type": "string", "pattern": "^snap_" },
+            "point": {
+              "type": "object",
+              "required": ["x", "y"],
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ActionRequest": {
+      "allOf": [
+        { "$ref": "#/$defs/ClaimedTabRef" },
+        {
+          "type": "object",
+          "required": ["operationId", "expectedDocumentEpoch", "action"],
+          "properties": {
+            "operationId": { "type": "string", "pattern": "^op_" },
+            "confirmationId": { "type": "string", "pattern": "^conf_" },
+            "confirmation": {
+              "type": "object",
+              "properties": {
+                "required": { "type": "boolean" },
+                "reason": { "type": "string", "maxLength": 120 }
+              }
+            },
+            "confirmationTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 600000 },
+            "expectedDocumentEpoch": { "type": "integer", "minimum": 0 },
+            "action": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "click", "doubleClick", "hover", "move", "drag", "scroll",
+                    "fill", "type", "press", "focus", "check", "uncheck",
+                    "select", "navigate", "back", "forward", "reload",
+                    "downloadMedia", "dialogAccept", "dialogDismiss", "dialogPrompt"
+                  ]
+                },
+                "target": { "$ref": "#/$defs/Target" },
+                "value": {},
+                "options": { "type": "object" }
+              }
+            },
+            "expect": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["type"],
+                "properties": {
+                  "type": {
+                    "enum": ["navigation", "popup", "download", "fileChooser", "dialog"]
+                  },
+                  "timeoutMs": { "type": "integer", "minimum": 1 }
+                }
+              }
+            },
+            "observeAfter": { "type": "object" },
+            "timeoutMs": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "Artifact": {
+      "type": "object",
+      "required": ["artifactId", "kind", "size", "createdAt", "expiresAt"],
+      "properties": {
+        "artifactId": { "type": "string", "pattern": "^art_" },
+        "kind": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "size": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string" },
+        "fileName": { "type": "string" },
+        "uri": { "type": "string", "pattern": "^browser-artifact://" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Event": {
+      "type": "object",
+      "required": ["seq", "time", "type"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "time": { "type": "string", "format": "date-time" },
+        "type": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "tabId": { "type": "string" },
+        "documentEpoch": { "type": "integer", "minimum": 0 },
+        "payload": {}
+      }
+    }
+  }
+}
