@@ -20,6 +20,12 @@ Run diagnostics with the dedicated command:
 scripts/browserctl doctor
 ```
 
+Inspect the contract for an unfamiliar method before calling it:
+
+```sh
+scripts/browserctl describe action.perform
+```
+
 Call every browser API method through the stable generic interface:
 
 ```sh
@@ -95,7 +101,7 @@ Claim before observing or acting. Keep the returned `leaseId`, expiry, ownership
 | `action.perform` | Perform one idempotency-protected browser action. |
 | `condition.wait` | Wait for a URL, locator state, or registered browser condition. |
 
-Prefer compact interactive DOM. Request a screenshot when layout, canvas state, drag-and-drop, or visual fallback matters. Native transport messages are chunked, AI DOM reports `truncated: true` explicitly, and artifacts alone support `artifact.readChunk`; narrow and recapture a truncated observation.
+Prefer compact interactive DOM and read it from `result.dom.text`. Frame entries contain metadata by default; request `"include":{"frameAiDom":true,"nodeDetails":true}` only for a structured client that needs the duplicated frame payload. Request a screenshot when layout, canvas state, drag-and-drop, or visual fallback matters. Native transport messages are chunked, AI DOM reports `truncated: true` explicitly, and artifacts alone support `artifact.readChunk`; narrow and recapture a truncated observation. `truncated: false` means only that the current materialized DOM fit the node budget—it does not prove that a virtualized page is complete.
 
 ### Dialogs, files, downloads, and exports
 
@@ -104,7 +110,7 @@ Prefer compact interactive DOM. Request a screenshot when layout, canvas state, 
 | `dialog.get`, `dialog.respond` | Inspect and accept/dismiss/prompt a JavaScript dialog. |
 | `fileChooser.setFiles` | Set user-authorized absolute paths on a registered chooser. |
 | `download.get`, `download.wait` | Read or wait for associated terminal download metadata, including final local `fileName`. |
-| `content.export` | Export sanitized `html`, `text`, `markdown`, or `dom`; `googleWorkspace` is a best-effort visible-text/AX JSON export for `docs.google.com`. |
+| `content.export` | Export sanitized `html`, `text`, `markdown`, or `dom`; requires `operationId` because it creates an artifact. `googleWorkspace` is a best-effort visible-text/AX JSON export for `docs.google.com`. |
 | `pageAssets.list`, `pageAssets.export` | Inspect page assets or export their redacted inventory manifest. |
 | `artifact.get`, `artifact.readChunk`, `artifact.delete` | Read metadata, stream content, or delete a same-session artifact; always pass `sessionId`. |
 
@@ -177,6 +183,16 @@ scripts/browserctl rpc action.perform --params '{
 
 Action types are `click`, `doubleClick`, `hover`, `move`, `drag`, `scroll`, `fill`, `type`, `press`, `focus`, `check`, `uncheck`, `select`, `navigate`, `back`, `forward`, `reload`, `downloadMedia`, `dialogAccept`, `dialogDismiss`, and `dialogPrompt`.
 
+`scroll` may omit its target to wheel the top-level viewport. `press` may omit its target to send a page-level key and accepts either `value` or `key`:
+
+```sh
+scripts/browserctl rpc action.perform --params '{
+  "sessionId":"ses_...","tabId":"tab_...","leaseId":"lease_...",
+  "operationId":"op_...","expectedDocumentEpoch":18,
+  "action":{"type":"press","key":"PageDown"}
+}'
+```
+
 Expected event types are `navigation`, `popup`, `download`, `fileChooser`, and `dialog`. Put expectations in the same request as the triggering action.
 
 ## Capabilities
@@ -196,6 +212,8 @@ Request only those required by the task:
 Capability grants do not replace trusted confirmation for consequential actions.
 
 `artifact.get` returns only portable metadata by default. Set `includeLocalPath: true` only when the user needs a filesystem path and the session holds `artifact.localPath`; never infer the daemon's private artifact path.
+
+`content.export` returns `coverage` beside its artifact metadata. `source: materialized-dom`, `completeness: unknown`, and `virtualizedContentMayBeOmitted: true` mean the artifact is a sanitized snapshot of what the page has mounted, not a guarantee of complete application data.
 
 For a consequential `action.perform`, set `confirmation.required` and a short non-secret `reason`. The first call returns `CONFIRMATION_REQUIRED` with a `confirmationId` without executing the action. Poll `confirmation.get` with both `sessionId` and `confirmationId`; only after status becomes `approved`, retransmit the unchanged request with the same `operationId` plus that `confirmationId`. Never invent, approve, or substitute a confirmation ID.
 

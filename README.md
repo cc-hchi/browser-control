@@ -106,6 +106,14 @@ For direct integrations, use the canonical CLI shape:
 ```
 
 Use `--params -` to read one JSON object from stdin when shell quoting is unsafe.
+Inspect a method before composing an unfamiliar request:
+
+```sh
+"$HOME/Library/Application Support/browser-control/bin/browserctl" --json describe action.perform
+```
+
+The description reports required and optional fields, lease and epoch requirements,
+protected capabilities, and a minimal example when one is available.
 
 ## Install the Skill separately (optional)
 

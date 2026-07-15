@@ -24,11 +24,12 @@ import (
 const maxCLIMessage = 128 * 1024 * 1024
 
 type options struct {
-	socket  string
-	timeout time.Duration
-	json    bool
-	command string
-	args    []string
+	socket     string
+	timeout    time.Duration
+	timeoutSet bool
+	json       bool
+	command    string
+	args       []string
 }
 
 type cliFailure struct {
@@ -49,7 +50,7 @@ func run(args []string, stdin io.Reader, stdout io.Writer) int {
 	}
 	parsed, err := parseArgs(args, cfg.SocketPath)
 	if err != nil {
-		writeFailure(stdout, "INVALID_ARGUMENT", err.Error(), "Use: browserctl --json doctor, or browserctl --json rpc METHOD --params JSON")
+		writeFailure(stdout, "INVALID_ARGUMENT", err.Error(), "Use: browserctl --json doctor, browserctl --json describe METHOD, or browserctl --json rpc METHOD --params JSON")
 		return 2
 	}
 	switch parsed.command {
@@ -57,8 +58,10 @@ func run(args []string, stdin io.Reader, stdout io.Writer) int {
 		return runDoctor(parsed, cfg, stdout)
 	case "rpc":
 		return runRPC(parsed, stdin, stdout)
+	case "describe":
+		return runDescribe(parsed, stdout)
 	default:
-		writeFailure(stdout, "INVALID_ARGUMENT", "A command is required.", "Use doctor or rpc.")
+		writeFailure(stdout, "INVALID_ARGUMENT", "A command is required.", "Use doctor, describe, or rpc.")
 		return 2
 	}
 }
@@ -85,6 +88,7 @@ func parseArgs(args []string, defaultSocket string) (options, error) {
 				return options{}, fmt.Errorf("--timeout must be between 1ns and 10m")
 			}
 			result.timeout = timeout
+			result.timeoutSet = true
 			args = args[2:]
 		default:
 			if strings.HasPrefix(args[0], "-") {
@@ -139,8 +143,12 @@ func runRPC(opts options, stdin io.Reader, stdout io.Writer) int {
 		return 2
 	}
 
-	response, err := call(opts.socket, opts.timeout, method, params)
+	response, err := call(opts.socket, effectiveRPCTimeout(opts, params), method, params)
 	if err != nil {
+		if isTimeoutError(err) {
+			writeFailure(stdout, "REQUEST_TIMEOUT", "browserctl timed out waiting for the request result.", "Query the operation when an operationId was supplied, or retry with a larger --timeout for a read-only request.")
+			return 1
+		}
 		writeFailure(stdout, "DAEMON_UNAVAILABLE", "Could not complete the local browserd request.", daemonRemediation(opts.socket))
 		return 1
 	}
@@ -150,6 +158,35 @@ func runRPC(opts options, stdin io.Reader, stdout io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func effectiveRPCTimeout(opts options, params []byte) time.Duration {
+	if opts.timeoutSet {
+		return opts.timeout
+	}
+	timeout := opts.timeout + 5*time.Second
+	var values map[string]any
+	if json.Unmarshal(params, &values) != nil {
+		return timeout
+	}
+	requested, ok := values["timeoutMs"].(float64)
+	if !ok || requested <= 0 {
+		return timeout
+	}
+	requested = min(requested, float64((10*time.Minute)/time.Millisecond))
+	requestedTimeout := time.Duration(requested) * time.Millisecond
+	if requestedTimeout+5*time.Second > timeout {
+		return requestedTimeout + 5*time.Second
+	}
+	return timeout
+}
+
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func runDoctor(opts options, cfg config.Config, stdout io.Writer) int {
