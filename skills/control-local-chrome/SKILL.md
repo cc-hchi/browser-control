@@ -1,11 +1,17 @@
 ---
 name: control-local-chrome
-description: Control the user's existing signed-in local Google Chrome through the browser-control CLI, including tabs, semantic page inspection, screenshots, navigation, clicking, typing, scrolling, forms, frames, popups, dialogs, uploads, downloads, clipboard access, and page exports. Use when the user asks to operate Chrome or the current page, reuse an existing Chrome login, complete an interactive browser workflow, test a site in their Chrome, or diagnose browser-control. Prefer ordinary web or connector tools when only public information is needed and local Chrome state is irrelevant.
+description: Control the user's existing signed-in local Google Chrome through the browser-control CLI, including tabs, semantic page inspection, screenshots, navigation, clicking, typing, scrolling, forms, frames, popups, dialogs, uploads, downloads, clipboard access, and page exports. Use when the user asks to operate Chrome or the current page, reuse browser-only login or extension state, complete an interactive browser workflow, test a site in their Chrome, or diagnose browser-control. Prefer a purpose-built connector, API, or CLI whenever it can access the target, including private or authenticated resources; use Chrome when browser state or UI interaction is material.
 ---
 
 # Control Local Chrome
 
 Operate the user's existing Chrome through the bundled `scripts/browserctl` wrapper. Treat the browser runtime as the execution and safety boundary; do not replace it with shell-driven browser automation or an MCP server.
+
+## Choose the right integration
+
+Before starting Chrome, prefer a purpose-built connector, API, or CLI that can access the target with the required authorization. Private or authenticated content does not by itself require browser control. Use this Skill when the task depends on the user's current Chrome state, a browser extension, browser-owned interaction, or a site without a suitable structured integration.
+
+For document and repository URLs, check the available semantic integration first. Fall back to Chrome only when it cannot satisfy the request.
 
 ## Run commands
 
@@ -17,16 +23,16 @@ Start every task with:
 <skill-dir>/scripts/browserctl doctor
 ```
 
-If doctor fails, follow the single remediation in its JSON error. Do not repeatedly probe a missing or incompatible runtime. Read [references/api.md](references/api.md) before composing an unfamiliar RPC call or interpreting a response field.
+If doctor fails, follow the single remediation in its JSON error. Do not repeatedly probe a missing or incompatible runtime. Run `browserctl describe METHOD` and read [references/api.md](references/api.md) before composing an unfamiliar RPC call or interpreting a response field.
 
 ## Follow the control workflow
 
 1. Run `doctor` and require a healthy daemon, native host, extension, and protocol handshake.
 2. Open a named session and keep its non-enumerable `sessionId` within the current task. A new session has no protected capabilities. If the task needs any, call `session.requestCapabilities`, wait for the user to decide in the trusted extension UI, then call `session.get` with that `sessionId` and verify the grant before continuing.
 3. List tabs. Claim the requested existing tab when its signed-in state matters; otherwise open a session-owned tab. If multiple tabs plausibly match and choosing the wrong one could mutate state, ask the user which tab to use.
-4. Observe before acting. Capture an interactive DOM snapshot and add a screenshot only when layout or visual state matters.
+4. Observe before acting. Capture the compact interactive DOM and read `result.dom.text`; request frame node details only when a structured client needs them. Add a screenshot only when layout or visual state matters.
 5. Target elements in this order: semantic locator, current snapshot node reference, current screenshot coordinate. Re-observe before falling back; never guess coordinates from an old screenshot.
-6. Give every mutating operation a new `operationId`, the observed `documentEpoch`, and any expected navigation, popup, download, file chooser, or dialog. Register those expectations with the action rather than waiting afterward.
+6. Give every mutating operation a new `operationId`. Supply `expectedDocumentEpoch` when `browserctl describe METHOD` requires it, and register expected navigation, popup, download, file chooser, or dialog with the triggering action.
 7. Verify an observable result after each material action. Use an observation diff or a focused query instead of assuming success from a click response.
 8. Release claimed user tabs. Close only tabs reported as session-owned. Close the session even after a recoverable failure.
 

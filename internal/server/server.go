@@ -638,6 +638,19 @@ func (s *Server) forward(ctx context.Context, method string, raw json.RawMessage
 	}
 	if leaseRequired {
 		sessionID, tabID, leaseID := leaseFields(params)
+		var missing []string
+		if sessionID == "" {
+			missing = append(missing, "sessionId")
+		}
+		if tabID == "" {
+			missing = append(missing, "tabId")
+		}
+		if leaseID == "" {
+			missing = append(missing, "leaseId")
+		}
+		if len(missing) > 0 {
+			return nil, protocol.InvalidParams(method+" requires "+strings.Join(missing, ", "), map[string]any{"method": method, "missing": missing})
+		}
 		if rpcErr := s.core.ValidateLease(sessionID, tabID, leaseID); rpcErr != nil {
 			return nil, rpcErr
 		}
@@ -677,20 +690,30 @@ func (s *Server) forward(ctx context.Context, method string, raw json.RawMessage
 			return nil, protocol.InvalidParams(method+" requires expectedDocumentEpoch", nil)
 		}
 	}
+	if method == "action.perform" {
+		if _, supplied := params["__preflight"]; supplied {
+			return nil, protocol.InvalidParams("action.perform does not accept reserved __preflight data", nil)
+		}
+		if _, supplied := params["__approvedRequestHash"]; supplied {
+			return nil, protocol.InvalidParams("action.perform does not accept reserved __approvedRequestHash data", nil)
+		}
+	}
 	tabID := stringField(params, "tabId")
 	call := func(callCtx context.Context) (json.RawMessage, *protocol.RPCError) {
+		dispatched := false
 		result, rpcErr := s.core.RunTab(callCtx, tabID, func(tabCtx context.Context) (json.RawMessage, *protocol.RPCError) {
 			callRaw, callParams := raw, params
 			if method == "action.perform" {
 				var gateErr *protocol.RPCError
-				callRaw, callParams, gateErr = s.authorizeAction(tabCtx, callRaw, callParams)
+				callRaw, callParams, gateErr = s.authorizeAction(tabCtx, callParams)
 				if gateErr != nil {
 					return nil, gateErr
 				}
 			}
+			dispatched = true
 			return s.callBridge(tabCtx, method, callRaw, callParams)
 		})
-		if rpcErr != nil && operationID != "" && mutatingMethod(method) {
+		if rpcErr != nil && dispatched && operationID != "" && mutatingMethod(method) {
 			switch protocol.ErrorKind(rpcErr) {
 			case "TIMEOUT", "CANCELLED", "EXTENSION_DISCONNECTED", "CHROME_DISCONNECTED":
 				rpcErr = protocol.WithEffect(rpcErr, "possible", map[string]any{"operationId": operationID, "sessionId": sessionID, "tabId": tabID})
@@ -712,7 +735,7 @@ func (s *Server) forward(ctx context.Context, method string, raw json.RawMessage
 	return result, rpcErr
 }
 
-func (s *Server) authorizeAction(ctx context.Context, raw json.RawMessage, params map[string]any) (json.RawMessage, map[string]any, *protocol.RPCError) {
+func (s *Server) authorizeAction(ctx context.Context, params map[string]any) (json.RawMessage, map[string]any, *protocol.RPCError) {
 	browserInstanceID := stringField(params, "browserInstanceId")
 	if browserInstanceID == "" {
 		browserInstanceID = s.bridges.DefaultID()
@@ -721,6 +744,8 @@ func (s *Server) authorizeAction(ctx context.Context, raw json.RawMessage, param
 		return nil, nil, protocol.NewError(protocol.CodeBridgeUnavailable, "EXTENSION_DISCONNECTED", "no compatible Chrome extension is connected", true, nil)
 	}
 	boundParams := cloneMap(params)
+	delete(boundParams, "__preflight")
+	delete(boundParams, "__approvedRequestHash")
 	boundParams["browserInstanceId"] = browserInstanceID
 	boundRaw := protocol.MarshalResult(boundParams)
 	preflightRaw, rpcErr := s.callBridge(ctx, "action.preflight", boundRaw, boundParams)
@@ -733,7 +758,8 @@ func (s *Server) authorizeAction(ctx context.Context, raw json.RawMessage, param
 	}
 	required, _ := preflight["confirmationRequired"].(bool)
 	if !required {
-		return boundRaw, boundParams, nil
+		boundParams["__preflight"] = preflight
+		return protocol.MarshalResult(boundParams), boundParams, nil
 	}
 	requestHash := stringField(preflight, "requestHash")
 	if requestHash == "" {
@@ -777,6 +803,7 @@ func (s *Server) authorizeAction(ctx context.Context, raw json.RawMessage, param
 		return nil, nil, consumeErr
 	}
 	boundParams["__approvedRequestHash"] = requestHash
+	boundParams["__preflight"] = preflight
 	return protocol.MarshalResult(boundParams), boundParams, nil
 }
 

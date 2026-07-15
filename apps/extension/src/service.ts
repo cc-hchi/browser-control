@@ -604,6 +604,13 @@ export class ExtensionService {
       includeHidden: options.includeHidden === true,
       includeText: options.includeText !== false,
     };
+    const include = (
+      options.include && typeof options.include === "object"
+        ? options.include
+        : options
+    ) as Record<string, unknown>;
+    const includeFrameAiDom = include.frameAiDom === true;
+    const includeNodeDetails = include.nodeDetails === true;
     const results = await this.#invokeAll<RuntimeSnapshot>(
       state.chromeTabId,
       "capture",
@@ -612,6 +619,7 @@ export class ExtensionService {
     const snapshotId = randomId("snap");
     const frames = new Map<number, FrameSnapshot>();
     const publicFrames: Array<Record<string, unknown>> = [];
+    const domParts: string[] = [];
     for (const result of results) {
       if (!result.result) continue;
       const local = result.result;
@@ -623,6 +631,9 @@ export class ExtensionService {
       const aiDom = local.aiDom.replace(
         /\bref=([a-z]\d+)\b/g,
         (_match, ref: string) => `ref=${prefix}${ref}`,
+      );
+      domParts.push(
+        `[frame ${result.frameId} ${String(redactUrl(local.url) ?? "")}]\n${aiDom}`,
       );
       frames.set(result.frameId, {
         frameId: result.frameId,
@@ -637,8 +648,8 @@ export class ExtensionService {
         title: local.title,
         revision: local.revision,
         viewport: local.viewport,
-        aiDom,
-        nodes,
+        ...(includeFrameAiDom ? { aiDom } : {}),
+        ...(includeNodeDetails ? { nodes } : {}),
         truncated: local.truncated,
       });
     }
@@ -655,11 +666,6 @@ export class ExtensionService {
       frames,
     });
 
-    const include = (
-      options.include && typeof options.include === "object"
-        ? options.include
-        : options
-    ) as Record<string, unknown>;
     const response: Record<string, unknown> = {
       snapshotId,
       tab: await this.#tabGet({ tabId: state.tabId }),
@@ -667,12 +673,7 @@ export class ExtensionService {
       frames: publicFrames,
       dom: {
         format: "ai-dom",
-        text: publicFrames
-          .map(
-            (frame) =>
-              `[frame ${frame.frameId} ${String(frame.url ?? "")}]\n${String(frame.aiDom ?? "")}`,
-          )
-          .join("\n"),
+        text: domParts.join("\n"),
         truncated: publicFrames.some((frame) => frame.truncated === true),
       },
     };
@@ -873,7 +874,10 @@ export class ExtensionService {
     const state = this.#claimed(params);
     const action = record(params.action);
     const type = requiredString(action, "type");
-    const preflight = await this.#actionPreflight(params);
+    const preflight =
+      params.__preflight && typeof params.__preflight === "object"
+        ? record(params.__preflight)
+        : await this.#actionPreflight(params);
     if (preflight.confirmationRequired === true) {
       const approvedHash =
         typeof params.__approvedRequestHash === "string"
@@ -979,6 +983,28 @@ export class ExtensionService {
           actionResult = { performed: true, inputMode: "cdp", point };
           break;
         }
+        case "press": {
+          if (action.target && typeof action.target === "object") {
+            actionResult = await this.#performTargetAction(
+              state,
+              action,
+              type,
+              typeof preflight.targetElementIdentity === "string"
+                ? preflight.targetElementIdentity
+                : undefined,
+              typeof preflight.targetFrameId === "number"
+                ? preflight.targetFrameId
+                : undefined,
+            );
+          } else {
+            await this.#debugger.dispatchKey(
+              state.chromeTabId,
+              String(action.value ?? action.key ?? ""),
+            );
+            actionResult = { performed: true, inputMode: "cdp" };
+          }
+          break;
+        }
         case "downloadMedia": {
           const url = requiredString(action, "url");
           const downloadId = await chrome.downloads.download({
@@ -1051,6 +1077,10 @@ export class ExtensionService {
     let targetElementIdentity: string | undefined;
     let targetFrameId: number | undefined;
     let targetLabel = "";
+    const key = String(action.value ?? action.key ?? "");
+    if (type === "press" && !key) {
+      throw new RpcError("INVALID_REQUEST", "press requires value or key");
+    }
 
     if (
       action.target &&
@@ -1116,7 +1146,7 @@ export class ExtensionService {
     if (
       type === "dialogPrompt" ||
       (type === "dialogAccept" && dialog?.type !== "alert") ||
-      (type === "press" && String(action.value ?? "").toLowerCase() === "enter")
+      (type === "press" && key.toLowerCase() === "enter")
     ) {
       confirmationRequired = true;
       reason ||= type.startsWith("dialog")
@@ -1129,6 +1159,7 @@ export class ExtensionService {
     const canonicalParams = { ...params };
     delete canonicalParams.confirmationId;
     delete canonicalParams.__approvedRequestHash;
+    delete canonicalParams.__preflight;
     const requestHash = await hashCanonical({
       method: "action.perform",
       params: canonicalParams,
@@ -1194,7 +1225,10 @@ export class ExtensionService {
         { retryable: true },
       );
     }
-    const localAction = { type, value: action.value } as RuntimeAction;
+    const localAction = {
+      type,
+      value: action.value ?? action.key,
+    } as RuntimeAction;
     if (["fill", "select", "check", "uncheck", "focus"].includes(type)) {
       const result = await this.#invokeFrame<Record<string, unknown>>(
         state.chromeTabId,
@@ -1224,7 +1258,7 @@ export class ExtensionService {
       ]);
       await this.#debugger.dispatchKey(
         state.chromeTabId,
-        String(action.value ?? ""),
+        String(action.value ?? action.key ?? ""),
       );
       return { performed: true, frameId: prepared.frameId, inputMode: "cdp" };
     }
@@ -1636,6 +1670,12 @@ export class ExtensionService {
   ): Promise<Record<string, unknown>> {
     const state = this.#claimed(params);
     const format = String(params.format ?? "html");
+    const coverage = {
+      source: "materialized-dom",
+      completeness: "unknown",
+      virtualizedContentMayBeOmitted: true,
+      documentEpoch: state.documentEpoch,
+    };
     if (format === "dom") {
       const content = JSON.stringify(
         {
@@ -1646,7 +1686,7 @@ export class ExtensionService {
         null,
         2,
       );
-      return this.#createArtifact(
+      const artifact = await this.#createArtifact(
         params,
         state,
         "page-dom.json",
@@ -1654,6 +1694,7 @@ export class ExtensionService {
         content,
         "dom-export",
       );
+      return { ...artifact, coverage };
     }
     if (format === "googleWorkspace") {
       const tab = await chrome.tabs.get(state.chromeTabId);
@@ -1690,7 +1731,7 @@ export class ExtensionService {
         null,
         2,
       );
-      return this.#createArtifact(
+      const artifact = await this.#createArtifact(
         params,
         state,
         "google-workspace.json",
@@ -1698,6 +1739,13 @@ export class ExtensionService {
         content,
         "google-workspace-export",
       );
+      return {
+        ...artifact,
+        coverage: {
+          ...coverage,
+          source: "visible-text-and-accessibility",
+        },
+      };
     }
     if (!(["html", "text", "markdown"] as string[]).includes(format))
       throw new RpcError("UNSUPPORTED", `unsupported export format: ${format}`);
@@ -1716,7 +1764,7 @@ export class ExtensionService {
         : format === "markdown"
           ? "text/markdown"
           : "text/plain";
-    return this.#createArtifact(
+    const artifact = await this.#createArtifact(
       params,
       state,
       `page.${format === "markdown" ? "md" : format === "text" ? "txt" : "html"}`,
@@ -1724,6 +1772,7 @@ export class ExtensionService {
       content,
       "page-export",
     );
+    return { ...artifact, coverage };
   }
 
   async #pageAssets(

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"os"
@@ -21,6 +22,76 @@ func TestParseArgsAndValidObject(t *testing.T) {
 	}
 	if !validObject([]byte(`{"a":1}`)) || validObject([]byte(`[]`)) || validObject([]byte(`{} {}`)) {
 		t.Fatal("validObject did not enforce exactly one JSON object")
+	}
+}
+
+func TestEffectiveRPCTimeoutAndDescribe(t *testing.T) {
+	defaultOptions := options{timeout: 30 * time.Second}
+	if got := effectiveRPCTimeout(defaultOptions, []byte(`{"timeoutMs":30000}`)); got != 35*time.Second {
+		t.Fatalf("effectiveRPCTimeout() = %s, want 35s", got)
+	}
+	if got := effectiveRPCTimeout(defaultOptions, []byte(`{"timeoutMs":900000}`)); got != 10*time.Minute+5*time.Second {
+		t.Fatalf("capped effectiveRPCTimeout() = %s, want 10m5s", got)
+	}
+	explicit := options{timeout: 2 * time.Second, timeoutSet: true}
+	if got := effectiveRPCTimeout(explicit, []byte(`{"timeoutMs":30000}`)); got != 2*time.Second {
+		t.Fatalf("explicit effectiveRPCTimeout() = %s, want 2s", got)
+	}
+	if !isTimeoutError(context.DeadlineExceeded) {
+		t.Fatal("context deadline was not classified as a request timeout")
+	}
+
+	description, ok := describeMethod("action.perform")
+	if !ok || !description.RequiresOperationID || !description.RequiresLease || !description.RequiresDocumentEpoch {
+		t.Fatalf("action.perform description = %+v, %v", description, ok)
+	}
+	required := make(map[string]bool)
+	for _, field := range description.Required {
+		required[field] = true
+	}
+	for _, field := range []string{"sessionId", "tabId", "leaseId", "operationId", "expectedDocumentEpoch", "action"} {
+		if !required[field] {
+			t.Fatalf("action.perform description omitted %s: %+v", field, description)
+		}
+	}
+
+	var output bytes.Buffer
+	if code := runDescribe(options{command: "describe", args: []string{"content.export"}}, &output); code != 0 {
+		t.Fatalf("runDescribe() code = %d, output = %s", code, output.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result["ok"] != true {
+		t.Fatalf("describe output = %s, error = %v", output.String(), err)
+	}
+}
+
+func TestDescribeRegistryMatchesProtocol(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "protocol", "methods.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry struct {
+		PublicMethods []string `json:"publicMethods"`
+	}
+	if err := json.Unmarshal(raw, &registry); err != nil {
+		t.Fatal(err)
+	}
+	protocolMethods := make(map[string]bool, len(registry.PublicMethods))
+	for _, method := range registry.PublicMethods {
+		protocolMethods[method] = true
+	}
+	if len(protocolMethods) != len(publicRPCMethods) {
+		t.Fatalf("describe registry has %d methods, protocol has %d", len(publicRPCMethods), len(protocolMethods))
+	}
+	for method := range protocolMethods {
+		if !publicRPCMethods[method] {
+			t.Errorf("describe registry omitted public method %s", method)
+		}
+	}
+	for method := range publicRPCMethods {
+		if !protocolMethods[method] {
+			t.Errorf("describe registry contains non-public method %s", method)
+		}
 	}
 }
 

@@ -204,6 +204,7 @@ func TestConsequentialActionRequiresTrustedApprovalAndReplaysOnce(t *testing.T) 
 	_ = server
 	var preflights atomic.Int32
 	var performed atomic.Int32
+	var forwardedPreflight atomic.Bool
 	bridgeHandler := func(_ context.Context, _ *rpc.Peer, request protocol.Request) (any, *protocol.RPCError) {
 		switch request.Method {
 		case "tab.claim":
@@ -219,6 +220,11 @@ func TestConsequentialActionRequiresTrustedApprovalAndReplaysOnce(t *testing.T) 
 			}, nil
 		case "action.perform":
 			performed.Add(1)
+			var params map[string]any
+			if json.Unmarshal(request.Params, &params) == nil {
+				_, ok := params["__preflight"].(map[string]any)
+				forwardedPreflight.Store(ok)
+			}
 			return map[string]any{"performed": true}, nil
 		case "bridge.event":
 			return map[string]any{"accepted": true}, nil
@@ -278,12 +284,81 @@ func TestConsequentialActionRequiresTrustedApprovalAndReplaysOnce(t *testing.T) 
 	if performed.Load() != 1 {
 		t.Fatalf("performed calls = %d, want 1", performed.Load())
 	}
+	if !forwardedPreflight.Load() {
+		t.Fatal("approved action did not receive the daemon-verified preflight result")
+	}
 	result, rpcErr = call(t, public, "action.perform", params)
 	if rpcErr != nil || performed.Load() != 1 {
 		t.Fatalf("action replay = (%s, %v), performed = %d", result, rpcErr, performed.Load())
 	}
 	if preflights.Load() != 2 {
 		t.Fatalf("preflight calls = %d, want 2 (request and approved execution only)", preflights.Load())
+	}
+}
+
+func TestForwardRejectsMissingLeaseFieldsBeforeSessionLookup(t *testing.T) {
+	_, public, _, _ := startTestServer(t)
+	_, rpcErr := call(t, public, "tab.activate", map[string]any{"tabId": "tab-missing-lease"})
+	assertServerRPCError(t, rpcErr, protocol.CodeInvalidParams, "INVALID_REQUEST")
+	if !strings.Contains(rpcErr.Message, "sessionId") || !strings.Contains(rpcErr.Message, "leaseId") {
+		t.Fatalf("missing lease error = %q", rpcErr.Message)
+	}
+}
+
+func TestActionPreflightTimeoutHasNoPossibleEffect(t *testing.T) {
+	_, public, _, cfg := startTestServer(t)
+	var performed atomic.Int32
+	bridgeHandler := func(_ context.Context, _ *rpc.Peer, request protocol.Request) (any, *protocol.RPCError) {
+		switch request.Method {
+		case "tab.claim":
+			return map[string]any{"tabId": "tab-preflight-timeout", "documentEpoch": 1, "claimed": true}, nil
+		case "action.preflight":
+			return nil, protocol.NewError(protocol.CodeBridgeTimeout, "TIMEOUT", "preflight timed out", true, map[string]any{"method": "action.preflight"})
+		case "action.perform":
+			performed.Add(1)
+			return map[string]any{"performed": true}, nil
+		default:
+			return nil, protocol.NewError(protocol.CodeMethodNotFound, "METHOD_NOT_FOUND", "not implemented by test bridge", false, nil)
+		}
+	}
+	trusted, err := rpc.Dial(context.Background(), "unix", cfg.BridgeSocketPath, bridgeHandler)
+	if err != nil {
+		t.Fatalf("dial timeout bridge: %v", err)
+	}
+	t.Cleanup(func() { _ = trusted.Close() })
+	authenticateBridge(t, trusted, cfg)
+	registerBridge(t, trusted, "browser-preflight-timeout")
+
+	rawSession, rpcErr := call(t, public, "session.open", map[string]any{"name": "preflight-timeout"})
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	var session core.Session
+	if err := json.Unmarshal(rawSession, &session); err != nil {
+		t.Fatal(err)
+	}
+	rawClaim, rpcErr := call(t, public, "tab.claim", map[string]any{
+		"sessionId": session.SessionID, "browserInstanceId": "browser-preflight-timeout", "tabId": "tab-preflight-timeout",
+	})
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	var claim map[string]any
+	if err := json.Unmarshal(rawClaim, &claim); err != nil {
+		t.Fatal(err)
+	}
+	_, rpcErr = call(t, public, "action.perform", map[string]any{
+		"sessionId": session.SessionID, "tabId": "tab-preflight-timeout", "leaseId": claim["leaseId"],
+		"operationId": "op_preflight_timeout", "expectedDocumentEpoch": 1,
+		"action": map[string]any{"type": "press", "key": "PageDown"},
+	})
+	assertServerRPCError(t, rpcErr, protocol.CodeBridgeTimeout, "TIMEOUT")
+	var data map[string]any
+	if err := json.Unmarshal(rpcErr.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["effect"] != "none" || performed.Load() != 0 {
+		t.Fatalf("preflight timeout data = %v, performed = %d", data, performed.Load())
 	}
 }
 
