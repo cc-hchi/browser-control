@@ -1,4 +1,4 @@
 interface:
   display_name: "Control Local Chrome"
-  short_description: "Safely control your signed-in local Chrome"
-  default_prompt: "Use $control-local-chrome to operate my local Chrome safely."
+  short_description: "Operate Chrome with a productized agent interface"
+  default_prompt: "Use $control-local-chrome to operate my local Chrome."

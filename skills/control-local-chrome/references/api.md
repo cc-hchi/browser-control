@@ -5,6 +5,7 @@ Use this reference when composing RPC calls, selecting capabilities, or interpre
 ## Contents
 
 - [Invocation](#invocation)
+- [Task recipes](#task-recipes)
 - [Identifiers and state](#identifiers-and-state)
 - [Methods](#methods)
 - [Locators and targets](#locators-and-targets)
@@ -35,6 +36,67 @@ scripts/browserctl rpc METHOD --params 'JSON_OBJECT'
 The CLI sends JSON-RPC 2.0 to the local daemon and prints one JSON response. Treat a nonzero exit status as failure even if stdout is parseable. Pass `--params -` and provide one JSON object on stdin when shell quoting would be fragile or the payload contains sensitive user-authored text.
 
 Do not depend on convenience CLI verbs: they may wrap the methods below, but `rpc` is the canonical Skill interface.
+
+## Task recipes
+
+Use these patterns as the starting point for common product workflows. Replace opaque IDs with values returned by the runtime.
+
+### Inspect the current page
+
+1. `doctor`
+2. `session.open`
+3. `tab.list`
+4. `tab.claim`
+5. `observation.capture` with `include.dom: "interactive"` and, when needed, `screenshot: true`
+6. Read `result.dom.text` or `result.screenshot` and target semantic elements
+7. `tab.release`
+8. `session.close`
+
+### Open a new page
+
+1. `doctor`
+2. `session.open`
+3. `tab.open` with a unique `operationId` and the requested URL
+4. `tab.claim`
+5. `observation.capture` or `condition.wait`
+6. `tab.release`
+7. `session.close`
+
+### Claim an existing signed-in tab
+
+1. `doctor`
+2. `session.open`
+3. `tab.list`
+4. Match origin and title; if ambiguous, ask the user
+5. `tab.claim`
+6. `observation.capture`
+7. Perform the requested action with `action.perform`
+8. `observation.diff` or a focused `locator.query`
+9. `tab.release`
+10. `session.close`
+
+### Submit a form
+
+1. `doctor`
+2. `session.open`
+3. `tab.claim`
+4. `observation.capture`
+5. Resolve semantic locators for the fields and submit control
+6. `action.perform` with the fill, select, check, or press actions
+7. `action.perform` for the submit, with `confirmation.required` when the action is consequential and the appropriate `expect` entry for navigation or dialog
+8. `observation.diff` or `condition.wait`
+9. `tab.release`
+10. `session.close`
+
+### Export or download content
+
+1. `doctor`
+2. `session.open`
+3. `tab.claim`
+4. `observation.capture`
+5. `content.export`, `pageAssets.export`, or the triggering `action.perform` with a registered `download`
+6. `artifact.get`, `artifact.readChunk`, or `download.wait`
+7. Release the tab and close the session
 
 ## Identifiers and state
 
