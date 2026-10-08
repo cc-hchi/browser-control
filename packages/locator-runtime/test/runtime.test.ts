@@ -408,3 +408,32 @@ test("throttled frames still detect an element that is moving", async () => {
   );
   runtime.dispose();
 });
+
+test("prepare skips timed stability sampling in a hidden (background) document", async () => {
+  const { document } = installDom('<button id="save">Save</button>');
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => "hidden",
+  });
+  // Background tabs get no frames and ~1s clamped timers; make both hang so
+  // the test fails if prepare waits on either.
+  const realSetTimeout = globalThis.setTimeout;
+  Object.assign(globalThis, {
+    requestAnimationFrame: () => 0,
+    setTimeout: () => 0,
+  });
+  const { LocatorRuntime } = await import("../src/runtime.js");
+  const runtime = new LocatorRuntime();
+  const button = document.querySelector("#save")!;
+  setRect(button);
+  setHitTarget(document, button);
+  try {
+    const node = await runtime.prepare({
+      locator: { by: "css", value: "#save" },
+    });
+    assert.equal(node.actionability.stable, true);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    runtime.dispose();
+  }
+});

@@ -610,11 +610,17 @@ export class LocatorRuntime implements LocatorRuntimeApi {
   }
 
   async #waitForStable(element: Element): Promise<boolean> {
-    // requestAnimationFrame never fires while the tab is not being rendered
-    // (background tab, occluded or non-frontmost window on macOS), which used
-    // to hang every targeted action until the daemon deadline. Race each frame
-    // against a short timer so stability is still measured, just on a coarser
-    // clock, and the action proceeds or fails with a real actionability reason.
+    // A hidden document (background tab) is not rendered: requestAnimationFrame
+    // never fires and Chrome clamps timers to ~1s, so sampling layout over time
+    // costs seconds per action and measures nothing, because nothing animates.
+    // Treat a connected element in a hidden document as stable.
+    if (element.ownerDocument.visibilityState === "hidden") {
+      return element.isConnected;
+    }
+    // A visible document can still stop producing frames (an occluded or
+    // non-frontmost window on macOS), which used to hang every targeted action
+    // until the daemon deadline. Race each frame against a short timer so
+    // stability is still measured, just on a coarser clock.
     const frame = (): Promise<void> =>
       new Promise((resolve) => {
         let settled = false;

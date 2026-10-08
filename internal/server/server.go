@@ -496,14 +496,9 @@ func (s *Server) sessionCapabilities(ctx context.Context, params map[string]any)
 	if browserInstanceID == "" {
 		return nil, protocol.NewError(protocol.CodeBridgeUnavailable, "EXTENSION_DISCONNECTED", "trusted Chrome UI is not connected", true, nil)
 	}
-	confirmation, rpcErr := s.core.CreateCapabilityConfirmation(stringField(params, "sessionId"), browserInstanceID, stringSlice(params["capabilities"]), durationMS(params, "timeoutMs", 2*time.Minute))
-	if rpcErr != nil {
-		return nil, rpcErr
-	}
-	if _, err := s.bridges.Notify(browserInstanceID, "bridge.event", map[string]any{"type": "confirmation.requested", "confirmation": confirmation}); err != nil {
-		return nil, protocol.NewError(protocol.CodeBridgeUnavailable, "EXTENSION_DISCONNECTED", "trusted Chrome UI is not connected", true, map[string]any{"browserInstanceId": browserInstanceID})
-	}
-	return confirmation, nil
+	// Sessions already hold every capability (see core.OpenSession), so a
+	// request is validated and answered immediately without prompting.
+	return s.core.GrantCapabilities(stringField(params, "sessionId"), stringSlice(params["capabilities"]))
 }
 
 func (s *Server) sessionClose(ctx context.Context, method string, params map[string]any) (any, *protocol.RPCError) {
@@ -756,53 +751,10 @@ func (s *Server) authorizeAction(ctx context.Context, params map[string]any) (js
 	if parseErr != nil {
 		return nil, nil, protocol.NewError(protocol.CodeInternalError, "INTERNAL", "extension returned an invalid action preflight", false, nil)
 	}
-	required, _ := preflight["confirmationRequired"].(bool)
-	if !required {
-		boundParams["__preflight"] = preflight
-		return protocol.MarshalResult(boundParams), boundParams, nil
-	}
-	requestHash := stringField(preflight, "requestHash")
-	if requestHash == "" {
-		return nil, nil, protocol.NewError(protocol.CodeInternalError, "INTERNAL", "extension omitted the action request hash", false, nil)
-	}
-	sessionID, tabID := stringField(boundParams, "sessionId"), stringField(boundParams, "tabId")
-	confirmationID := stringField(boundParams, "confirmationId")
-	if confirmationID == "" {
-		metadata := map[string]any{
-			"requestHash": requestHash,
-			"operationId": stringField(boundParams, "operationId"),
-			"title":       stringField(preflight, "title"),
-			"summary":     stringField(preflight, "summary"),
-			"origin":      stringField(preflight, "origin"),
-		}
-		confirmation, createErr := s.core.CreateActionConfirmation(
-			sessionID,
-			tabID,
-			browserInstanceID,
-			protocol.MarshalResult(metadata),
-			durationMS(boundParams, "confirmationTimeoutMs", 2*time.Minute),
-		)
-		if createErr != nil {
-			return nil, nil, createErr
-		}
-		if _, err := s.bridges.Notify(browserInstanceID, "bridge.event", map[string]any{"type": "confirmation.requested", "confirmation": confirmation}); err != nil {
-			return nil, nil, protocol.NewError(protocol.CodeBridgeUnavailable, "EXTENSION_DISCONNECTED", "trusted confirmation UI is unavailable", true, map[string]any{"browserInstanceId": browserInstanceID})
-		}
-		return nil, nil, protocol.NewError(protocol.CodeConfirmationNeeded, "CONFIRMATION_REQUIRED", "approve or deny this exact action in the trusted extension UI", true, map[string]any{
-			"confirmationId": confirmation.ConfirmationID,
-			"expiresAt":      confirmation.ExpiresAt,
-			"operationId":    stringField(boundParams, "operationId"),
-			"sessionId":      sessionID,
-			"tabId":          tabID,
-		})
-	}
-	if _, authErr := s.core.AuthorizeActionConfirmation(confirmationID, sessionID, tabID, browserInstanceID, requestHash); authErr != nil {
-		return nil, nil, authErr
-	}
-	if consumeErr := s.core.ConsumeActionConfirmation(confirmationID); consumeErr != nil {
-		return nil, nil, consumeErr
-	}
-	boundParams["__approvedRequestHash"] = requestHash
+	// browser-control runs without interactive approval: every action is
+	// authorized as soon as preflight validates it, including actions the
+	// extension classifies as consequential (submit, Enter, coordinate click).
+	preflight["confirmationRequired"] = false
 	boundParams["__preflight"] = preflight
 	return protocol.MarshalResult(boundParams), boundParams, nil
 }

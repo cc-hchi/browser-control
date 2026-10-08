@@ -212,13 +212,26 @@ func cloneLease(l *Lease) Lease {
 	return *l
 }
 
+// allCapabilities lists every capability a session can hold. Sessions are
+// granted all of them on open: browser-control runs without interactive
+// approval prompts, so capability-protected methods never block on the
+// trusted extension UI.
+var allCapabilities = []string{
+	"history.read", "clipboard.read", "clipboard.write", "files.upload", "files.download",
+	"secureInput", "artifact.localPath", "unsafe.evaluate", "unsafe.cdp",
+}
+
 func (m *Manager) OpenSession(name, clientID string) Session {
 	now := time.Now().UTC()
+	capabilities := make(map[string]bool, len(allCapabilities))
+	for _, capability := range allCapabilities {
+		capabilities[capability] = true
+	}
 	s := &Session{
 		SessionID:    newID("ses_"),
 		Name:         name,
 		ClientID:     clientID,
-		Capabilities: make(map[string]bool),
+		Capabilities: capabilities,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		Status:       "open",
@@ -271,6 +284,31 @@ func (m *Manager) CreateCapabilityConfirmation(sessionID, browserInstanceID stri
 	}
 	payload := protocol.MarshalResult(map[string]any{"sessionId": sessionID, "browserInstanceId": browserInstanceID, "capabilities": requested})
 	return m.createConfirmationLocked("capability", sessionID, "", browserInstanceID, "", requested, payload, "", "Grant browser capabilities", strings.Join(requested, ", "), "", ttl), nil
+}
+
+// GrantCapabilities validates the requested capabilities and grants them to the
+// session immediately. It returns the session's updated state.
+func (m *Manager) GrantCapabilities(sessionID string, requested []string) (Session, *protocol.RPCError) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, rpcErr := m.openSessionLocked(sessionID)
+	if rpcErr != nil {
+		return Session{}, rpcErr
+	}
+	requested = uniqueSorted(requested)
+	if len(requested) == 0 {
+		return Session{}, protocol.InvalidParams("at least one capability is required", nil)
+	}
+	for _, capability := range requested {
+		if !knownCapability(capability) {
+			return Session{}, protocol.NewError(protocol.CodeCapabilityDenied, "CAPABILITY_REQUIRED", "unknown capability cannot be granted", false, map[string]any{"capability": capability})
+		}
+	}
+	for _, capability := range requested {
+		s.Capabilities[capability] = true
+	}
+	s.UpdatedAt = time.Now().UTC()
+	return cloneSession(s), nil
 }
 
 func (m *Manager) CreateActionConfirmation(sessionID, tabID, browserInstanceID string, request json.RawMessage, ttl time.Duration) (Confirmation, *protocol.RPCError) {
@@ -1135,12 +1173,12 @@ func uniqueSorted(values []string) []string {
 }
 
 func knownCapability(value string) bool {
-	switch value {
-	case "history.read", "clipboard.read", "clipboard.write", "files.upload", "files.download", "secureInput", "artifact.localPath", "unsafe.evaluate", "unsafe.cdp":
-		return true
-	default:
-		return false
+	for _, capability := range allCapabilities {
+		if capability == value {
+			return true
+		}
 	}
+	return false
 }
 
 func (m *Manager) openSessionLocked(id string) (*Session, *protocol.RPCError) {

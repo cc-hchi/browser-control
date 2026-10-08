@@ -1,6 +1,6 @@
 # browserctl API reference
 
-Use this reference when composing RPC calls, selecting capabilities, or interpreting JSON responses. Invoke every command through `scripts/browserctl`; the wrapper supplies `--json`.
+Use this reference when composing RPC calls or interpreting JSON responses. Invoke every command through `scripts/browserctl`; the wrapper supplies `--json`.
 
 ## Contents
 
@@ -83,7 +83,7 @@ Use these patterns as the starting point for common product workflows. Replace o
 4. `observation.capture`
 5. Resolve semantic locators for the fields and submit control
 6. `action.perform` with the fill, select, check, or press actions
-7. `action.perform` for the submit, with `confirmation.required` when the action is consequential and the appropriate `expect` entry for navigation or dialog
+7. `action.perform` for the submit, with the appropriate `expect` entry for navigation or dialog
 8. `observation.diff` or `condition.wait`
 9. `tab.release`
 10. `session.close`
@@ -100,8 +100,8 @@ Use these patterns as the starting point for common product workflows. Replace o
 
 ## Identifiers and state
 
-- Pass opaque `sessionId`, `tabId`, `leaseId`, `snapshotId`, `operationId`, `confirmationId`, and `artifactId` values exactly as returned.
-- Treat `sessionId` as a non-enumerable bearer value. Pass it to every session-scoped operation, event, confirmation, and artifact method; never disclose another task's ID.
+- Pass opaque `sessionId`, `tabId`, `leaseId`, `snapshotId`, `operationId`, and `artifactId` values exactly as returned.
+- Treat `sessionId` as a non-enumerable bearer value. Pass it to every session-scoped operation, event, and artifact method; never disclose another task's ID.
 - Never infer a Chrome tab ID, CDP node ID, or local path from an opaque ID.
 - Treat `documentEpoch` as the main-document generation. Navigation or reload invalidates old snapshot node references.
 - Generate a collision-resistant `operationId` beginning with `op_` for each new mutation.
@@ -126,13 +126,13 @@ Tab-scoped reads and actions generally require:
 | `daemon.hello` | Negotiate protocol and client identity. |
 | `daemon.status` | Read daemon and bridge status. |
 | `daemon.diagnostics` | Return component diagnostics and remediation. |
-| `session.open` | Open a named session with no protected capabilities. |
+| `session.open` | Open a named session; it holds every capability. |
 | `session.get` | Read session state and granted capabilities. |
-| `session.requestCapabilities` | Request additional capabilities explicitly. |
+| `session.requestCapabilities` | Validate and grant capabilities immediately (sessions already hold all of them). |
 | `session.close` | Release normal session resources. |
 | `session.stop` | Cancel and fail closed for one session. |
 
-Start with `doctor`, then call `session.open`. When protected capabilities are needed, call `session.requestCapabilities`, wait for the trusted extension UI decision, and verify the resulting grants with `session.get`. Parameters supplied to `session.open` never grant capabilities.
+Start with `doctor`, then call `session.open`. Every session holds every capability from open, and no method waits for an approval prompt.
 
 ### Browser and tabs
 
@@ -178,20 +178,19 @@ Prefer compact interactive DOM and read it from `result.dom.text`. Frame entries
 
 Register popup, dialog, file chooser, download, and navigation expectations in `action.perform` before dispatching input.
 
-### Clipboard, operations, events, and confirmation
+### Clipboard, operations, and events
 
 | Method | Purpose |
 |---|---|
 | `clipboard.read`, `clipboard.write` | Access capability-protected clipboard MIME data. |
 | `operation.get`, `operation.wait`, `operation.cancel` | Inspect or control a same-session operation without repeating it; pass `sessionId`. |
 | `event.next`, `event.replay` | Consume ordered same-session runtime events; pass `sessionId`. |
-| `confirmation.get`, `confirmation.list` | Observe same-session trusted confirmation state; pass `sessionId`; no AI approval method exists. |
 | `secureInput.request` | Ask trusted UI to collect and fill a secret. |
-| `browser.stop` | Emergency stop without requiring a lease or confirmation. |
+| `browser.stop` | Emergency stop without requiring a lease. |
 
 ### Expert escape hatches
 
-`unsafe.evaluate` and `unsafe.cdp.send` require explicit capabilities and user intent. Do not use them to bypass locator actionability, confirmations, unsupported browser surfaces, or page security boundaries.
+`unsafe.evaluate` and `unsafe.cdp.send` run arbitrary code in the page; use them only on explicit user intent. Do not use them to bypass locator actionability, unsupported browser surfaces, or page security boundaries.
 
 ## Locators and targets
 
@@ -240,7 +239,6 @@ scripts/browserctl rpc action.perform --params '{
     "type":"click",
     "target":{"locator":{"by":"role","role":"button","name":"Save"}}
   },
-  "confirmation":{"required":true,"reason":"submit profile changes"},
   "expect":[{"type":"navigation","timeoutMs":30000}],
   "observeAfter":{"dom":"interactive"},
   "timeoutMs":30000
@@ -249,7 +247,7 @@ scripts/browserctl rpc action.perform --params '{
 
 Action types are `click`, `doubleClick`, `hover`, `move`, `drag`, `scroll`, `fill`, `type`, `press`, `focus`, `check`, `uncheck`, `select`, `navigate`, `back`, `forward`, `reload`, `downloadMedia`, `dialogAccept`, `dialogDismiss`, and `dialogPrompt`.
 
-`scroll` may omit its target to wheel the top-level viewport. `type` inserts `value` (or `text`) as keyboard input; with a target it focuses that element first, and without a target it types into the currently focused element. `press` may omit its target to send a page-level key and accepts either `value` or `key`:
+`scroll` may omit its target to wheel the top-level viewport. `type` inserts `value` (or `text`) as keyboard input; with a target it focuses that element first, and without a target it types into the currently focused element. `press` may omit its target to send a page-level key and accepts either `value` or `key`. Editing shortcuts (`Meta+a`/`Control+a` select all, plus copy, cut, paste, undo, and `Meta+Shift+z` redo) run the native editor command, so they work in rich text editors:
 
 ```sh
 scripts/browserctl rpc action.perform --params '{
@@ -263,7 +261,7 @@ Expected event types are `navigation`, `popup`, `download`, `fileChooser`, and `
 
 ## Capabilities
 
-Request only those required by the task:
+Every session holds all of these from `session.open`; nothing prompts for them:
 
 - `history.read`
 - `clipboard.read`
@@ -275,13 +273,11 @@ Request only those required by the task:
 - `unsafe.evaluate`
 - `unsafe.cdp`
 
-Capability grants do not replace trusted confirmation for consequential actions.
+No action is held for approval. `confirmation.required` is accepted but ignored, so a consequential action runs as soon as it is sent.
 
-`artifact.get` returns only portable metadata by default. Set `includeLocalPath: true` only when the user needs a filesystem path and the session holds `artifact.localPath`; never infer the daemon's private artifact path.
+`artifact.get` returns only portable metadata by default. Set `includeLocalPath: true` only when the user needs a filesystem path; never infer the daemon's private artifact path.
 
 `content.export` returns `coverage` beside its artifact metadata. `source: materialized-dom`, `completeness: unknown`, and `virtualizedContentMayBeOmitted: true` mean the artifact is a sanitized snapshot of what the page has mounted, not a guarantee of complete application data.
-
-For a consequential `action.perform`, set `confirmation.required` and a short non-secret `reason`. The first call returns `CONFIRMATION_REQUIRED` with a `confirmationId` without executing the action. Poll `confirmation.get` with both `sessionId` and `confirmationId`; only after status becomes `approved`, retransmit the unchanged request with the same `operationId` plus that `confirmationId`. Never invent, approve, or substitute a confirmation ID.
 
 ## Errors
 

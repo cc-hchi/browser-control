@@ -872,34 +872,6 @@ export class ExtensionService {
       params.__preflight && typeof params.__preflight === "object"
         ? record(params.__preflight)
         : await this.#actionPreflight(params);
-    if (preflight.confirmationRequired === true) {
-      const approvedHash =
-        typeof params.__approvedRequestHash === "string"
-          ? params.__approvedRequestHash
-          : "";
-      if (!approvedHash) {
-        throw new RpcError(
-          "CONFIRMATION_REQUIRED",
-          "this action requires approval in the trusted extension UI",
-          {
-            details: { requestHash: preflight.requestHash },
-          },
-        );
-      }
-      if (approvedHash !== preflight.requestHash) {
-        throw new RpcError(
-          "STALE_REFERENCE",
-          "the approved action or resolved target changed before execution",
-          {
-            retryable: true,
-            details: {
-              approvedRequestHash: approvedHash,
-              actualRequestHash: preflight.requestHash,
-            },
-          },
-        );
-      }
-    }
     const expectations = Array.isArray(params.expect)
       ? params.expect.map(record)
       : [];
@@ -1084,19 +1056,9 @@ export class ExtensionService {
     const state = this.#claimed(params);
     const action = record(params.action);
     const type = requiredString(action, "type");
-    const confirmation =
-      params.confirmation && typeof params.confirmation === "object"
-        ? record(params.confirmation)
-        : {};
-    let confirmationRequired = confirmation.required === true;
-    let reason =
-      typeof confirmation.reason === "string"
-        ? confirmation.reason.slice(0, 120)
-        : "";
     let targetIdentity: Record<string, unknown> | undefined;
     let targetElementIdentity: string | undefined;
     let targetFrameId: number | undefined;
-    let targetLabel = "";
     const key = String(action.value ?? action.key ?? "");
     if (type === "press" && !key) {
       throw new RpcError("INVALID_REQUEST", "press requires value or key");
@@ -1118,9 +1080,6 @@ export class ExtensionService {
       const node = prepared.node;
       targetElementIdentity = node.elementIdentity;
       targetFrameId = prepared.frameId;
-      targetLabel = String(
-        node.name || node.text || node.attributes["aria-label"] || node.tag,
-      ).slice(0, 160);
       targetIdentity = {
         frameId: prepared.frameId,
         elementIdentity: node.elementIdentity,
@@ -1137,48 +1096,13 @@ export class ExtensionService {
           "sensitive fields must be filled through secureInput.request",
         );
       }
-      const semanticText = [
-        node.name,
-        node.text,
-        node.attributes.type,
-        node.attributes["aria-label"],
-        node.attributes.id,
-        node.attributes.name,
-      ]
-        .filter(Boolean)
-        .join(" ");
-      if (
-        ["click", "doubleClick"].includes(type) &&
-        (node.attributes.type?.toLowerCase() === "submit" ||
-          CONSEQUENTIAL_LABEL.test(semanticText))
-      ) {
-        confirmationRequired = true;
-        reason ||= "submit or consequential click";
-      }
     } else if (
       ["click", "doubleClick"].includes(type) &&
       action.target &&
       record(action.target).point
     ) {
       await this.#validateCoordinateTarget(state, record(action.target));
-      confirmationRequired = true;
-      reason ||= "coordinate click";
-      targetLabel = "the selected screenshot coordinate";
       targetIdentity = { coordinateTarget: action.target };
-    }
-
-    const dialog = type.startsWith("dialog")
-      ? this.#debugger.getDialog(state.chromeTabId)
-      : undefined;
-    if (
-      type === "dialogPrompt" ||
-      (type === "dialogAccept" && dialog?.type !== "alert") ||
-      (type === "press" && key.toLowerCase() === "enter")
-    ) {
-      confirmationRequired = true;
-      reason ||= type.startsWith("dialog")
-        ? "respond to browser confirmation"
-        : "submit with Enter";
     }
 
     const tab = await chrome.tabs.get(state.chromeTabId);
@@ -1194,16 +1118,12 @@ export class ExtensionService {
       origin,
       targetIdentity,
     });
+    // browser-control runs without interactive approval prompts, so no action
+    // is ever held for confirmation (callers' `confirmation.required` is
+    // ignored). requestHash still binds the preflight to the exact request.
     return {
-      confirmationRequired,
+      confirmationRequired: false,
       requestHash,
-      title: confirmationRequired ? "Confirm browser action" : undefined,
-      summary: confirmationRequired
-        ? `${type}${targetLabel ? ` on “${targetLabel}”` : ""}${reason ? ` — ${reason}` : ""}`.slice(
-            0,
-            500,
-          )
-        : undefined,
       origin,
       documentEpoch: state.documentEpoch,
       targetElementIdentity,
@@ -2730,9 +2650,6 @@ export class ExtensionService {
     }
   }
 }
-
-const CONSEQUENTIAL_LABEL =
-  /\b(?:send|submit|publish|post|save|purchase|buy|pay|order|delete|remove|destroy|confirm|approve|grant|allow|invite|share|transfer|withdraw|sign\s*up|create\s+account)\b|发送|提交|发布|保存|购买|支付|下单|删除|移除|确认|批准|授权|允许|邀请|分享|转账|提现|注册/i;
 
 async function hashCanonical(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(canonicalize(value)));

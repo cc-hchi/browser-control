@@ -597,11 +597,16 @@ export class DebuggerManager {
       windowsVirtualKeyCode: definition.virtualKeyCode,
       nativeVirtualKeyCode: definition.virtualKeyCode,
     };
+    // Synthetic CDP key events skip the platform's shortcut-to-editing-command
+    // mapping, so Cmd/Ctrl+A etc. reach the page as plain keys and do nothing.
+    // Pass the editing command explicitly so these shortcuts behave natively.
+    const commands = editingCommandsFor(mask, primaryText);
     await this.send(chromeTabId, "Input.dispatchKeyEvent", {
       type: character && mask === 0 ? "keyDown" : "rawKeyDown",
       ...common,
       text: character && mask === 0 ? character : undefined,
       unmodifiedText: character,
+      ...(commands.length ? { commands } : {}),
     });
     await this.send(chromeTabId, "Input.dispatchKeyEvent", {
       type: "keyUp",
@@ -829,4 +834,36 @@ function pngDimensions(
   } catch {
     return undefined;
   }
+}
+
+// Modifier bits as used by Input.dispatchKeyEvent.
+const ALT = 1;
+const CONTROL = 2;
+const META = 4;
+const SHIFT = 8;
+
+// Editing shortcuts keyed by primary key, for the platform's primary
+// modifier (Cmd on macOS, Ctrl elsewhere). Values are Blink editor command
+// names accepted by Input.dispatchKeyEvent `commands`.
+const PRIMARY_SHORTCUTS: Record<string, string> = {
+  a: "selectAll",
+  c: "copy",
+  x: "cut",
+  v: "paste",
+  z: "undo",
+};
+
+/**
+ * Returns the editor commands a real keyboard shortcut would trigger, or an
+ * empty list when the key combination is not a recognised editing shortcut.
+ */
+export function editingCommandsFor(modifiers: number, key: string): string[] {
+  const primary = modifiers & (META | CONTROL);
+  // Exactly one of Cmd/Ctrl, optionally with Shift, and never with Alt.
+  if (primary !== META && primary !== CONTROL) return [];
+  if (modifiers & ALT) return [];
+  const lower = key.length === 1 ? key.toLowerCase() : key;
+  if (modifiers & SHIFT) return lower === "z" ? ["redo"] : [];
+  const command = PRIMARY_SHORTCUTS[lower];
+  return command ? [command] : [];
 }

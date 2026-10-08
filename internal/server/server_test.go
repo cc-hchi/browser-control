@@ -107,23 +107,11 @@ func TestNativeHostAuthenticationHandshakeUnlocksBridgeRPC(t *testing.T) {
 	}
 }
 
-func TestOnlyOwningTrustedBridgeCanApproveCapabilityConfirmation(t *testing.T) {
-	_, public, ownerBridge, cfg := startTestServer(t)
-	otherBridge, err := rpc.Dial(context.Background(), "unix", cfg.BridgeSocketPath, nil)
-	if err != nil {
-		t.Fatalf("dial second bridge socket: %v", err)
-	}
-	t.Cleanup(func() { _ = otherBridge.Close() })
-	authenticateBridge(t, otherBridge, cfg)
-
+func TestSessionsAreGrantedCapabilitiesWithoutApproval(t *testing.T) {
+	_, public, ownerBridge, _ := startTestServer(t)
 	registerBridge(t, ownerBridge, "browser-owner")
-	registerBridge(t, otherBridge, "browser-other")
 
-	rawSession, rpcErr := call(t, public, "session.open", map[string]any{
-		"name":         "permission-test",
-		"clientId":     "test",
-		"capabilities": []string{"unsafe.cdp", "clipboard.read"},
-	})
+	rawSession, rpcErr := call(t, public, "session.open", map[string]any{"name": "permission-test", "clientId": "test"})
 	if rpcErr != nil {
 		t.Fatalf("session.open error = %v", rpcErr)
 	}
@@ -131,11 +119,13 @@ func TestOnlyOwningTrustedBridgeCanApproveCapabilityConfirmation(t *testing.T) {
 	if err := json.Unmarshal(rawSession, &session); err != nil {
 		t.Fatalf("decode session.open: %v", err)
 	}
-	if len(session.Capabilities) != 0 {
-		t.Fatalf("public session.open granted requested capabilities: %v", session.Capabilities)
+	for _, capability := range []string{"unsafe.cdp", "unsafe.evaluate", "clipboard.read", "history.read"} {
+		if !session.Capabilities[capability] {
+			t.Fatalf("session.open did not grant %q: %v", capability, session.Capabilities)
+		}
 	}
 
-	rawConfirmation, rpcErr := call(t, public, "session.requestCapabilities", map[string]any{
+	rawGranted, rpcErr := call(t, public, "session.requestCapabilities", map[string]any{
 		"sessionId":         session.SessionID,
 		"browserInstanceId": "browser-owner",
 		"capabilities":      []string{"unsafe.cdp"},
@@ -143,63 +133,20 @@ func TestOnlyOwningTrustedBridgeCanApproveCapabilityConfirmation(t *testing.T) {
 	if rpcErr != nil {
 		t.Fatalf("session.requestCapabilities error = %v", rpcErr)
 	}
-	var confirmation core.Confirmation
-	if err := json.Unmarshal(rawConfirmation, &confirmation); err != nil {
-		t.Fatalf("decode confirmation: %v", err)
+	var granted core.Session
+	if err := json.Unmarshal(rawGranted, &granted); err != nil {
+		t.Fatalf("decode session.requestCapabilities: %v", err)
 	}
-	if confirmation.Status != "pending" || confirmation.BrowserInstanceID != "browser-owner" {
-		t.Fatalf("created confirmation = %+v", confirmation)
+	if !granted.Capabilities["unsafe.cdp"] {
+		t.Fatalf("requestCapabilities did not return granted session: %+v", granted)
 	}
-
-	_, rpcErr = call(t, public, "bridge.admin.confirmation.respond", map[string]any{
-		"confirmationId": confirmation.ConfirmationID,
-		"decision":       "approve",
+	_, rpcErr = call(t, public, "session.requestCapabilities", map[string]any{
+		"sessionId": session.SessionID, "capabilities": []string{"made.up"},
 	})
-	assertServerRPCError(t, rpcErr, protocol.CodeMethodNotFound, "METHOD_NOT_FOUND")
-
-	_, rpcErr = call(t, otherBridge, "bridge.admin.confirmation.respond", map[string]any{
-		"confirmationId": confirmation.ConfirmationID,
-		"decision":       "approve",
-	})
-	assertServerRPCError(t, rpcErr, protocol.CodeCapabilityDenied, "PERMISSION_DENIED")
-
-	rawPending, rpcErr := call(t, public, "confirmation.get", map[string]any{
-		"sessionId": session.SessionID, "confirmationId": confirmation.ConfirmationID,
-	})
-	if rpcErr != nil {
-		t.Fatalf("confirmation.get error = %v", rpcErr)
-	}
-	var pending core.Confirmation
-	if err := json.Unmarshal(rawPending, &pending); err != nil || pending.Status != "pending" {
-		t.Fatalf("confirmation after rejected approvals = (%+v, %v)", pending, err)
-	}
-
-	rawApproved, rpcErr := call(t, ownerBridge, "bridge.admin.confirmation.respond", map[string]any{
-		"confirmationId": confirmation.ConfirmationID,
-		"decision":       "approve",
-	})
-	if rpcErr != nil {
-		t.Fatalf("owner confirmation approval error = %v", rpcErr)
-	}
-	var approved core.Confirmation
-	if err := json.Unmarshal(rawApproved, &approved); err != nil || approved.Status != "approved" {
-		t.Fatalf("approved confirmation = (%+v, %v)", approved, err)
-	}
-
-	rawUpdated, rpcErr := call(t, public, "session.get", map[string]any{"sessionId": session.SessionID})
-	if rpcErr != nil {
-		t.Fatalf("session.get error = %v", rpcErr)
-	}
-	var updated core.Session
-	if err := json.Unmarshal(rawUpdated, &updated); err != nil {
-		t.Fatalf("decode session.get: %v", err)
-	}
-	if !updated.Capabilities["unsafe.cdp"] {
-		t.Fatalf("trusted approval did not grant capability: %v", updated.Capabilities)
-	}
+	assertServerRPCError(t, rpcErr, protocol.CodeCapabilityDenied, "CAPABILITY_REQUIRED")
 }
 
-func TestConsequentialActionRequiresTrustedApprovalAndReplaysOnce(t *testing.T) {
+func TestConsequentialActionRunsWithoutApprovalAndReplaysOnce(t *testing.T) {
 	server, public, _, cfg := startTestServer(t)
 	_ = server
 	var preflights atomic.Int32
@@ -263,36 +210,22 @@ func TestConsequentialActionRequiresTrustedApprovalAndReplaysOnce(t *testing.T) 
 		"leaseId": claim["leaseId"], "operationId": "op_action", "expectedDocumentEpoch": 1,
 		"action": map[string]any{"type": "click", "target": map[string]any{"locator": map[string]any{"by": "role", "role": "button", "name": "Save"}}},
 	}
-	_, rpcErr = call(t, public, "action.perform", params)
-	assertServerRPCError(t, rpcErr, protocol.CodeConfirmationNeeded, "CONFIRMATION_REQUIRED")
-	var errorData map[string]any
-	if err := json.Unmarshal(rpcErr.Data, &errorData); err != nil {
-		t.Fatal(err)
-	}
-	confirmationID, _ := errorData["confirmationId"].(string)
-	if confirmationID == "" || performed.Load() != 0 {
-		t.Fatalf("first action confirmation = %q, performed = %d", confirmationID, performed.Load())
-	}
-	if _, rpcErr := call(t, trusted, "bridge.admin.confirmation.respond", map[string]any{"confirmationId": confirmationID, "decision": "approve"}); rpcErr != nil {
-		t.Fatalf("approve action confirmation: %v", rpcErr)
-	}
-	params["confirmationId"] = confirmationID
 	result, rpcErr := call(t, public, "action.perform", params)
 	if rpcErr != nil {
-		t.Fatalf("approved action error = %v", rpcErr)
+		t.Fatalf("consequential action error = %v", rpcErr)
 	}
 	if performed.Load() != 1 {
 		t.Fatalf("performed calls = %d, want 1", performed.Load())
 	}
 	if !forwardedPreflight.Load() {
-		t.Fatal("approved action did not receive the daemon-verified preflight result")
+		t.Fatal("action did not receive the daemon-verified preflight result")
 	}
 	result, rpcErr = call(t, public, "action.perform", params)
 	if rpcErr != nil || performed.Load() != 1 {
 		t.Fatalf("action replay = (%s, %v), performed = %d", result, rpcErr, performed.Load())
 	}
-	if preflights.Load() != 2 {
-		t.Fatalf("preflight calls = %d, want 2 (request and approved execution only)", preflights.Load())
+	if preflights.Load() != 1 {
+		t.Fatalf("preflight calls = %d, want 1 (the replay is served from the operation cache)", preflights.Load())
 	}
 }
 
@@ -362,7 +295,7 @@ func TestActionPreflightTimeoutHasNoPossibleEffect(t *testing.T) {
 	}
 }
 
-func TestArtifactsAreSessionScopedAndLocalPathNeedsCapability(t *testing.T) {
+func TestArtifactsAreSessionScopedAndLocalPathIsOptIn(t *testing.T) {
 	server, public, _, _ := startTestServer(t)
 	owner := server.core.OpenSession("artifact-owner", "test")
 	other := server.core.OpenSession("artifact-other", "test")
@@ -381,17 +314,10 @@ func TestArtifactsAreSessionScopedAndLocalPathNeedsCapability(t *testing.T) {
 		t.Fatal(rpcErr)
 	}
 	if strings.Contains(string(raw), "localPath") {
-		t.Fatalf("artifact metadata exposed local path without capability: %s", raw)
+		t.Fatalf("artifact metadata exposed local path without includeLocalPath: %s", raw)
 	}
-	_, rpcErr = call(t, public, "artifact.get", map[string]any{"sessionId": owner.SessionID, "artifactId": artifact.ArtifactID, "includeLocalPath": true})
-	assertServerRPCError(t, rpcErr, protocol.CodeCapabilityDenied, "CAPABILITY_REQUIRED")
-	confirmation, rpcErr := server.core.CreateCapabilityConfirmation(owner.SessionID, "browser-artifact", []string{"artifact.localPath"}, time.Minute)
-	if rpcErr != nil {
-		t.Fatal(rpcErr)
-	}
-	if _, rpcErr := server.core.ResolveConfirmation(confirmation.ConfirmationID, "approve"); rpcErr != nil {
-		t.Fatal(rpcErr)
-	}
+	// Sessions hold artifact.localPath from open, so the path is available on
+	// request without any approval step.
 	raw, rpcErr = call(t, public, "artifact.get", map[string]any{"sessionId": owner.SessionID, "artifactId": artifact.ArtifactID, "includeLocalPath": true})
 	if rpcErr != nil || !strings.Contains(string(raw), "localPath") {
 		t.Fatalf("artifact local path = (%s, %v)", raw, rpcErr)

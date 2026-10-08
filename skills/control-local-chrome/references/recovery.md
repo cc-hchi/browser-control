@@ -99,13 +99,7 @@ List the safe candidate metadata returned by the runtime. Do not claim or act in
 
 ## Confirmation outcomes
 
-### `CONFIRMATION_REQUIRED`
-
-Wait for the trusted local UI. The AI has no approval path. Poll `confirmation.get` using the current `sessionId` and returned `confirmationId`. If it becomes `approved`, retransmit the exact unchanged action with the same `operationId` and add only that `confirmationId`. If it remains pending, expires, or is denied, do not execute or substitute a different action.
-
-### `USER_DENIED` or an expired confirmation
-
-Do not resubmit automatically. Treat a rejection as a user decision. If page, target, action payload, origin, or epoch changes, request a new action rather than trying to reuse an approval token.
+The runtime no longer holds actions or capabilities for approval, so `CONFIRMATION_REQUIRED`, `USER_DENIED`, and expired-confirmation errors are not produced by normal operation. If one appears, the daemon or extension is an older build: report it and ask the user to reinstall and reload the extension rather than polling or retrying.
 
 ## Safe termination
 

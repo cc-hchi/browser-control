@@ -370,48 +370,34 @@ func TestDeniedConfirmationFinalizesAwaitingOperationAndEnforcesOwnership(t *tes
 	assertRPCError(t, rpcErr, protocol.CodeInvalidState, "INVALID_REQUEST")
 }
 
-func TestCapabilityConfirmationIsTrustedFailClosedAndDeduplicated(t *testing.T) {
+func TestSessionsOpenWithAllCapabilitiesGranted(t *testing.T) {
 	m := newTestManager(t, time.Minute)
 	session := m.OpenSession("capabilities", "test")
-	if len(session.Capabilities) != 0 {
-		t.Fatalf("new session capabilities = %v, want none", session.Capabilities)
+	for _, capability := range allCapabilities {
+		if !session.Capabilities[capability] {
+			t.Fatalf("new session missing capability %q: %v", capability, session.Capabilities)
+		}
+		if rpcErr := m.RequireCapability(session.SessionID, capability); rpcErr != nil {
+			t.Fatalf("RequireCapability(%q) error = %v", capability, rpcErr)
+		}
+	}
+	if len(session.Capabilities) != len(allCapabilities) {
+		t.Fatalf("new session capabilities = %v, want exactly %v", session.Capabilities, allCapabilities)
 	}
 
-	assertRPCError(t, m.RequireCapability(session.SessionID, "unsafe.cdp"), protocol.CodeCapabilityDenied, "CAPABILITY_REQUIRED")
-	confirmation, rpcErr := m.CreateCapabilityConfirmation(session.SessionID, "browser-1", []string{"unsafe.cdp", "clipboard.read", "unsafe.cdp"}, time.Minute)
+	granted, rpcErr := m.GrantCapabilities(session.SessionID, []string{"unsafe.cdp", "clipboard.read", "unsafe.cdp"})
 	if rpcErr != nil {
-		t.Fatalf("CreateCapabilityConfirmation() error = %v", rpcErr)
+		t.Fatalf("GrantCapabilities() error = %v", rpcErr)
 	}
-	if got, want := confirmation.Capabilities, []string{"clipboard.read", "unsafe.cdp"}; !equalStrings(got, want) {
-		t.Fatalf("capabilities = %v, want %v", got, want)
+	if !granted.Capabilities["unsafe.cdp"] || !granted.Capabilities["clipboard.read"] {
+		t.Fatalf("granted session capabilities = %v", granted.Capabilities)
 	}
-	assertRPCError(t, m.RequireCapability(session.SessionID, "unsafe.cdp"), protocol.CodeConfirmationNeeded, "CONFIRMATION_REQUIRED")
-
-	duplicate, rpcErr := m.CreateCapabilityConfirmation(session.SessionID, "browser-1", []string{"clipboard.read", "unsafe.cdp"}, time.Minute)
-	if rpcErr != nil {
-		t.Fatalf("duplicate CreateCapabilityConfirmation() error = %v", rpcErr)
-	}
-	if duplicate.ConfirmationID != confirmation.ConfirmationID {
-		t.Fatalf("pending duplicate confirmation ID = %q, want %q", duplicate.ConfirmationID, confirmation.ConfirmationID)
-	}
-
-	resolved, rpcErr := m.ResolveConfirmation(confirmation.ConfirmationID, "approve")
-	if rpcErr != nil || resolved.Status != "approved" {
-		t.Fatalf("ResolveConfirmation() = (%+v, %v)", resolved, rpcErr)
-	}
-	if rpcErr := m.RequireCapability(session.SessionID, "unsafe.cdp"); rpcErr != nil {
-		t.Fatalf("RequireCapability(after approval) error = %v", rpcErr)
-	}
-	updated, rpcErr := m.GetSession(session.SessionID)
-	if rpcErr != nil || !updated.Capabilities["unsafe.cdp"] || !updated.Capabilities["clipboard.read"] {
-		t.Fatalf("approved session = (%+v, %v)", updated, rpcErr)
-	}
-
-	if _, rpcErr := m.CreateCapabilityConfirmation(session.SessionID, "browser-1", []string{"unknown.capability"}, time.Minute); rpcErr == nil {
-		t.Fatal("unknown capability confirmation unexpectedly succeeded")
-	} else {
-		assertRPCError(t, rpcErr, protocol.CodeCapabilityDenied, "CAPABILITY_REQUIRED")
-	}
+	_, rpcErr = m.GrantCapabilities(session.SessionID, []string{"made.up"})
+	assertRPCError(t, rpcErr, protocol.CodeCapabilityDenied, "CAPABILITY_REQUIRED")
+	_, rpcErr = m.GrantCapabilities(session.SessionID, nil)
+	assertRPCError(t, rpcErr, protocol.CodeInvalidParams, "INVALID_REQUEST")
+	_, rpcErr = m.GrantCapabilities("ses_missing", []string{"unsafe.cdp"})
+	assertRPCError(t, rpcErr, protocol.CodeSessionNotFound, "SESSION_NOT_FOUND")
 }
 
 func TestActionConfirmationExposesMetadataAndHashNotRawRequest(t *testing.T) {
