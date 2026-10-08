@@ -8,6 +8,7 @@ import type {
 import { DebuggerManager } from "./debugger-manager.js";
 import type { BridgeState, NativeBridge } from "./native-bridge.js";
 import { RpcError, record, requiredString, randomId } from "./shared.js";
+import { locatorFrom } from "./locator-input.js";
 import { TabRegistry, type TabState } from "./tab-registry.js";
 
 interface FrameSnapshot {
@@ -115,13 +116,6 @@ function downloadToPublic(
     startTime: item.startTime,
     endTime: item.endTime,
   };
-}
-
-function locatorFrom(value: unknown): Locator {
-  const locator = record(value) as unknown as Locator;
-  if (!locator.by)
-    throw new RpcError("INVALID_REQUEST", "locator.by is required");
-  return locator;
 }
 
 export class ExtensionService {
@@ -1005,6 +999,32 @@ export class ExtensionService {
           }
           break;
         }
+        case "type": {
+          // Without a target, type into whatever currently has focus, the same
+          // way an untargeted `press` sends a page-level key. Previously this
+          // fell through to the targeted path and failed with the misleading
+          // "params must be an object".
+          if (action.target && typeof action.target === "object") {
+            actionResult = await this.#performTargetAction(
+              state,
+              action,
+              type,
+              typeof preflight.targetElementIdentity === "string"
+                ? preflight.targetElementIdentity
+                : undefined,
+              typeof preflight.targetFrameId === "number"
+                ? preflight.targetFrameId
+                : undefined,
+            );
+          } else {
+            await this.#debugger.dispatchText(
+              state.chromeTabId,
+              String(action.value ?? action.text ?? ""),
+            );
+            actionResult = { performed: true, inputMode: "cdp" };
+          }
+          break;
+        }
         case "downloadMedia": {
           const url = requiredString(action, "url");
           const downloadId = await chrome.downloads.download({
@@ -1080,6 +1100,13 @@ export class ExtensionService {
     const key = String(action.value ?? action.key ?? "");
     if (type === "press" && !key) {
       throw new RpcError("INVALID_REQUEST", "press requires value or key");
+    }
+    if (
+      type === "type" &&
+      typeof action.value !== "string" &&
+      typeof action.text !== "string"
+    ) {
+      throw new RpcError("INVALID_REQUEST", "type requires value or text");
     }
 
     if (
@@ -1246,7 +1273,7 @@ export class ExtensionService {
       ]);
       await this.#debugger.dispatchText(
         state.chromeTabId,
-        String(action.value ?? ""),
+        String(action.value ?? action.text ?? ""),
       );
       return { performed: true, frameId: prepared.frameId, inputMode: "cdp" };
     }

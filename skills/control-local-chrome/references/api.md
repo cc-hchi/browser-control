@@ -195,7 +195,7 @@ Register popup, dialog, file chooser, download, and navigation expectations in `
 
 ## Locators and targets
 
-A semantic locator has `by` equal to `role`, `text`, `label`, `placeholder`, `testId`, or `css`. A role locator carries `role` and may carry a string or exact-text `name`. Locators may include a frame path, scope, `has`, `hasText`, `and`, `or`, `first`, `last`, `nth`/`index`, and open-shadow policy.
+A semantic locator has `by` equal to `role`, `text`, `label`, `placeholder`, `testId`, or `css`. A role locator carries `role` and may carry a string or exact-text `name`. The `css`, `text`, `label`, `placeholder`, and `testId` locators carry their query in `value` (`selector` is accepted as an alias for `css`). Unknown locator fields are rejected with `INVALID_REQUEST` rather than silently matching nothing. Locators may include a frame path, scope, `has`, `hasText`, `and`, `or`, `first`, `last`, `nth`/`index`, and open-shadow policy.
 
 ```json
 {
@@ -205,6 +205,10 @@ A semantic locator has `by` equal to `role`, `text`, `label`, `placeholder`, `te
     "name": {"text": "Save", "exact": true}
   }
 }
+```
+
+```json
+{"locator":{"by":"css","value":"#title-textarea #textbox"}}
 ```
 
 A snapshot-node target is bound to one snapshot:
@@ -245,7 +249,7 @@ scripts/browserctl rpc action.perform --params '{
 
 Action types are `click`, `doubleClick`, `hover`, `move`, `drag`, `scroll`, `fill`, `type`, `press`, `focus`, `check`, `uncheck`, `select`, `navigate`, `back`, `forward`, `reload`, `downloadMedia`, `dialogAccept`, `dialogDismiss`, and `dialogPrompt`.
 
-`scroll` may omit its target to wheel the top-level viewport. `press` may omit its target to send a page-level key and accepts either `value` or `key`:
+`scroll` may omit its target to wheel the top-level viewport. `type` inserts `value` (or `text`) as keyboard input; with a target it focuses that element first, and without a target it types into the currently focused element. `press` may omit its target to send a page-level key and accepts either `value` or `key`:
 
 ```sh
 scripts/browserctl rpc action.perform --params '{

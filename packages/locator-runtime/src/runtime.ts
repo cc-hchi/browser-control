@@ -24,6 +24,8 @@ const VERSION = "1.0.0";
 const MAX_SNAPSHOTS = 8;
 const SENSITIVE_ATTRIBUTE = "data-browser-control-sensitive";
 const REDACTED_TEXT = "[REDACTED]";
+// Upper bound for one stability sample when animation frames are throttled.
+const STABILITY_FRAME_FALLBACK_MS = 50;
 
 interface SnapshotState {
   refs: Map<string, Element>;
@@ -608,8 +610,23 @@ export class LocatorRuntime implements LocatorRuntimeApi {
   }
 
   async #waitForStable(element: Element): Promise<boolean> {
+    // requestAnimationFrame never fires while the tab is not being rendered
+    // (background tab, occluded or non-frontmost window on macOS), which used
+    // to hang every targeted action until the daemon deadline. Race each frame
+    // against a short timer so stability is still measured, just on a coarser
+    // clock, and the action proceeds or fails with a real actionability reason.
     const frame = (): Promise<void> =>
-      new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      new Promise((resolve) => {
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(finish, STABILITY_FRAME_FALLBACK_MS);
+        requestAnimationFrame(finish);
+      });
     await frame();
     const first = element.getBoundingClientRect();
     await frame();

@@ -345,3 +345,66 @@ test("marked secure input is redacted from snapshots and content exports", async
   assert.equal(editor.hasAttribute("style"), false);
   runtime.dispose();
 });
+
+test("prepare resolves when animation frames are throttled (background or occluded tab)", async () => {
+  const { document } = installDom('<button id="save">Save</button>');
+  // Simulate a tab that is not being rendered: rAF callbacks never run.
+  Object.assign(globalThis, {
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => undefined,
+  });
+  const { LocatorRuntime } = await import("../src/runtime.js");
+  const runtime = new LocatorRuntime();
+  const button = document.querySelector("#save")!;
+  setRect(button);
+  setHitTarget(document, button);
+
+  const started = Date.now();
+  const node = await runtime.prepare({
+    locator: { by: "css", value: "#save" },
+  });
+  const elapsed = Date.now() - started;
+
+  assert.equal(node.actionability.stable, true);
+  assert.ok(
+    elapsed < 1_000,
+    `prepare should fall back to timers instead of hanging (took ${elapsed}ms)`,
+  );
+  runtime.dispose();
+});
+
+test("throttled frames still detect an element that is moving", async () => {
+  const { document } = installDom('<button id="save">Save</button>');
+  Object.assign(globalThis, {
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => undefined,
+  });
+  const { LocatorRuntime } = await import("../src/runtime.js");
+  const runtime = new LocatorRuntime();
+  const button = document.querySelector("#save")!;
+  let y = 10;
+  Object.defineProperty(button, "getBoundingClientRect", {
+    configurable: true,
+    value: () => {
+      y += 40;
+      return {
+        x: 10,
+        y,
+        width: 120,
+        height: 30,
+        top: y,
+        right: 130,
+        bottom: y + 30,
+        left: 10,
+        toJSON: () => ({}),
+      };
+    },
+  });
+  setHitTarget(document, button);
+
+  await assert.rejects(
+    runtime.prepare({ locator: { by: "css", value: "#save" } }),
+    /NOT_ACTIONABLE: .*unstable|NOT_ACTIONABLE/,
+  );
+  runtime.dispose();
+});
