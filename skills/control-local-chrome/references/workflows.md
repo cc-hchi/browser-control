@@ -57,7 +57,7 @@ After completion, verify the expected URL, visible state, terminal download meta
 
 Use a semantic locator with an explicit frame chain. Each `framePath` component is a locator for its parent document's `<iframe>` element; match URL or name through stable CSS attributes when needed. Re-observe if a frame navigates; its prior node references and execution context are stale.
 
-The runtime follows same-origin frames and out-of-process cross-origin frames. Use open shadow roots through locator scoping. Closed shadow roots and browser-owned surfaces are platform boundaries; ask the user to complete that portion manually rather than attempting a bypass.
+The runtime follows same-origin frames and out-of-process cross-origin frames, including frames mounted after the page finished loading (payment fields, sign-in widgets, lazy embeds); they become reachable without re-claiming the tab. When a widget mounts asynchronously, wait for it with `condition.wait` and a `locator` (with `framePath`) instead of sleeping. Use open shadow roots through locator scoping. Closed shadow roots and browser-owned surfaces are platform boundaries; ask the user to complete that portion manually rather than attempting a bypass.
 
 ## Handle popups and dialogs
 

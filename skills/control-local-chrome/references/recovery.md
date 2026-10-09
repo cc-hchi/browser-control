@@ -55,7 +55,7 @@ Assume queued operations were cancelled. Query any in-flight operation, then re-
 
 ### `STALE_REFERENCE`
 
-Observe the tab again. Re-resolve a semantic locator against the new snapshot. Never transplant node references or coordinates into a new epoch. If the page advanced beyond a consequential step, verify whether the previous action already took effect before continuing.
+Observe the tab again. Re-resolve a semantic locator against the new snapshot. Never transplant node references or coordinates into a new epoch. A coordinate click already rebinds itself to the element that covered the point, so `STALE_REFERENCE` on a click means nothing interactive was under it: re-observe and target semantically. If the page advanced beyond a consequential step, verify whether the previous action already took effect before continuing.
 
 ### `DETACHED_NODE`, `FRAME_UNAVAILABLE`, `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, or `NOT_ACTIONABLE`
 

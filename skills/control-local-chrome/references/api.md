@@ -192,6 +192,8 @@ Register popup, dialog, file chooser, download, and navigation expectations in `
 
 `unsafe.evaluate` and `unsafe.cdp.send` run arbitrary code in the page; use them only on explicit user intent. Do not use them to bypass locator actionability, unsupported browser surfaces, or page security boundaries.
 
+`unsafe.evaluate` accepts an optional `frameId` to evaluate in one frame's main world. Use the frame id from an observation's `frames[].frameId` or the `f<frameId>_` prefix of a node reference; it works for cross-origin and out-of-process frames and is not blocked by the page's Content Security Policy. The result keeps the `Runtime.evaluate` shape (`result.value` or `exceptionDetails`) plus `frameId`. `targetSessionId` still selects a raw CDP session and takes precedence when both are passed.
+
 ## Locators and targets
 
 A semantic locator has `by` equal to `role`, `text`, `label`, `placeholder`, `testId`, or `css`. A role locator carries `role` and may carry a string or exact-text `name`. The `css`, `text`, `label`, `placeholder`, and `testId` locators carry their query in `value` (`selector` is accepted as an alias for `css`). Unknown locator fields are rejected with `INVALID_REQUEST` rather than silently matching nothing. Locators may include a frame path, scope, `has`, `hasText`, `and`, `or`, `first`, `last`, `nth`/`index`, and open-shadow policy.
@@ -223,6 +225,10 @@ A coordinate target is bound to the screenshot's snapshot and CSS viewport:
 ```
 
 Prefer semantic locators, then a current node reference, then a current screenshot point. Require a unique, visible, enabled, stable, and unobstructed target for mutation.
+
+If the page scrolled or reflowed after the screenshot, a coordinate `click`/`doubleClick` is not retried at the same point (it might now hit a different element). Instead it is rebound to the smallest visible, enabled snapshot element that covered the point when the screenshot was taken, re-resolved, and clicked at its current position; the result carries `"reboundFrom":"point"`. When no element covered the point, `STALE_REFERENCE` is returned as before.
+
+Elements inside cross-origin frames are clicked, hovered, scrolled and dragged with trusted CDP input (`"inputMode":"cdp"`), the same as top-level elements.
 
 ## Actions
 
