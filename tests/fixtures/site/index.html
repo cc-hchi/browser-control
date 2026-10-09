@@ -57,6 +57,8 @@
       <h2 id="frame-heading">Frames</h2>
       <iframe name="same-origin-frame" src="/frame/1"></iframe>
       <iframe id="cross-origin-frame" name="cross-origin-frame"></iframe>
+      <button id="mount-late-frame" type="button">Mount late frame</button>
+      <div id="late-frame-host"></div>
     </section>
 
     <section aria-labelledby="actionability-heading">
@@ -81,6 +83,16 @@
     <script type="module">
       const secondaryOrigin = `${location.protocol}//${location.hostname}:${Number(location.port) + 1}`;
       document.querySelector("#cross-origin-frame").src = `${secondaryOrigin}/frame/2`;
+
+      // Mounts a cross-origin iframe after the top document has completed, the way
+      // payment and sign-in widgets lazily mount their fields.
+      document.querySelector("#mount-late-frame").addEventListener("click", () => {
+        const frame = document.createElement("iframe");
+        frame.id = "late-frame";
+        frame.name = "late-frame";
+        frame.src = `${secondaryOrigin}/frame/3`;
+        document.querySelector("#late-frame-host").replaceChildren(frame);
+      });
 
       document.querySelector('[data-testid="submit-profile"]').addEventListener("click", () => {
         const email = document.querySelector('[name="email"]').value;

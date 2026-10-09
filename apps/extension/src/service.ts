@@ -86,6 +86,22 @@ interface FrameResult<T> {
 
 const MAX_SNAPSHOTS = 16;
 const MAX_INLINE_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const RUNTIME_NOT_INSTALLED = "locator runtime is not installed";
+
+function errorOf(result: chrome.scripting.InjectionResult<unknown>): unknown {
+  return (result as typeof result & { error?: unknown }).error;
+}
+
+function isRuntimeMissing(error: unknown): boolean {
+  if (!error) return false;
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && "message" in error
+        ? String((error as { message?: unknown }).message)
+        : String(error);
+  return message.includes(RUNTIME_NOT_INSTALLED);
+}
 
 function publicDownloadId(id: number): string {
   return `download_${id}`;
@@ -1934,21 +1950,23 @@ export class ExtensionService {
       .catch(() => undefined);
   }
 
-  async #invokeAll<T>(
-    chromeTabId: number,
+  // Frames mounted after the top document completed (payment fields, sign-in
+  // widgets, lazily rendered embeds) have no locator runtime. Install it on
+  // demand for exactly those frames, then retry once.
+  async #executeRuntime(
+    target: chrome.scripting.InjectionTarget,
     method: string,
     args: unknown[],
-  ): Promise<Array<FrameResult<T>>> {
-    let results: chrome.scripting.InjectionResult<unknown>[];
+  ): Promise<chrome.scripting.InjectionResult<unknown>[]> {
     try {
-      results = await chrome.scripting.executeScript({
-        target: { tabId: chromeTabId, allFrames: true },
+      return await chrome.scripting.executeScript({
+        target,
         func: async (runtimeMethod: string, runtimeArgs: unknown[]) => {
           const runtime = window.__browserControlLocatorRuntime as unknown as
             Record<string, (...values: unknown[]) => unknown> | undefined;
           if (!runtime)
             throw new Error(
-              "FRAME_UNAVAILABLE: locator runtime is not installed",
+              `FRAME_UNAVAILABLE: ${RUNTIME_NOT_INSTALLED}`,
             );
           const fn = runtime[runtimeMethod];
           if (typeof fn !== "function")
@@ -1962,15 +1980,59 @@ export class ExtensionService {
     } catch (error) {
       throw this.#runtimeError(error);
     }
-    return results.map((result) => {
-      const execution = result as typeof result & { error?: unknown };
-      if (execution.error) throw this.#runtimeError(execution.error);
-      return {
+  }
+
+  async #installRuntimeInFrames(
+    chromeTabId: number,
+    frameIds: number[],
+  ): Promise<void> {
+    if (!frameIds.length) return;
+    await chrome.scripting
+      .executeScript({
+        target: { tabId: chromeTabId, frameIds },
+        files: ["locator.js"],
+        injectImmediately: true,
+      })
+      .catch(() => undefined);
+  }
+
+  async #invokeAll<T>(
+    chromeTabId: number,
+    method: string,
+    args: unknown[],
+  ): Promise<Array<FrameResult<T>>> {
+    let results = await this.#executeRuntime(
+      { tabId: chromeTabId, allFrames: true },
+      method,
+      args,
+    );
+    const missing = results
+      .filter((result) => isRuntimeMissing(errorOf(result)))
+      .map((result) => result.frameId);
+    if (missing.length) {
+      await this.#installRuntimeInFrames(chromeTabId, missing);
+      const retried = await this.#executeRuntime(
+        { tabId: chromeTabId, frameIds: missing },
+        method,
+        args,
+      );
+      const byFrame = new Map(retried.map((result) => [result.frameId, result]));
+      results = results.map((result) => byFrame.get(result.frameId) ?? result);
+    }
+    const output: Array<FrameResult<T>> = [];
+    for (const result of results) {
+      const error = errorOf(result);
+      // A frame that still cannot host the runtime (browser-owned or otherwise
+      // uninjectable document) must not fail the call for every other frame.
+      if (isRuntimeMissing(error)) continue;
+      if (error) throw this.#runtimeError(error);
+      output.push({
         frameId: result.frameId,
         documentId: result.documentId,
         result: result.result as T,
-      };
-    });
+      });
+    }
+    return output;
   }
 
   async #invokeFrame<T>(
@@ -1979,33 +2041,14 @@ export class ExtensionService {
     method: string,
     args: unknown[],
   ): Promise<T | undefined> {
-    let results: chrome.scripting.InjectionResult<unknown>[];
-    try {
-      results = await chrome.scripting.executeScript({
-        target: { tabId: chromeTabId, frameIds: [frameId] },
-        func: async (runtimeMethod: string, runtimeArgs: unknown[]) => {
-          const runtime = window.__browserControlLocatorRuntime as unknown as
-            Record<string, (...values: unknown[]) => unknown> | undefined;
-          if (!runtime)
-            throw new Error(
-              "FRAME_UNAVAILABLE: locator runtime is not installed",
-            );
-          const fn = runtime[runtimeMethod];
-          if (typeof fn !== "function")
-            throw new Error(
-              `METHOD_NOT_FOUND: locator runtime method ${runtimeMethod} does not exist`,
-            );
-          return await fn.apply(runtime, runtimeArgs);
-        },
-        args: [method, args],
-      });
-    } catch (error) {
-      throw this.#runtimeError(error);
+    const target = { tabId: chromeTabId, frameIds: [frameId] };
+    let first = (await this.#executeRuntime(target, method, args))[0];
+    if (first && isRuntimeMissing(errorOf(first))) {
+      await this.#installRuntimeInFrames(chromeTabId, [frameId]);
+      first = (await this.#executeRuntime(target, method, args))[0];
     }
-    const first = results[0] as
-      | (chrome.scripting.InjectionResult<unknown> & { error?: unknown })
-      | undefined;
-    if (first?.error) throw this.#runtimeError(first.error);
+    const error = first ? errorOf(first) : undefined;
+    if (error) throw this.#runtimeError(error);
     return first?.result as T | undefined;
   }
 
@@ -2331,7 +2374,15 @@ export class ExtensionService {
       });
     });
     chrome.webNavigation.onCompleted.addListener((details) => {
-      if (details.frameId !== 0) return;
+      if (details.frameId !== 0) {
+        // Sub-frames mounted after the top document completed would otherwise
+        // never receive the runtime. Install it eagerly for claimed tabs only;
+        // navigation events keep their top-frame-only semantics.
+        const child = this.#registry.fromChromeId(details.tabId);
+        if (child?.claim)
+          void this.#installRuntimeInFrames(details.tabId, [details.frameId]);
+        return;
+      }
       const state = this.#registry.fromChromeId(details.tabId);
       if (!state) return;
       if (state.claim)

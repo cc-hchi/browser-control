@@ -164,6 +164,65 @@ try {
   });
   if (nestedFrame.count !== 1) throw new Error(`three-level frame query count = ${nestedFrame.count}`);
 
+  // A cross-origin frame mounted after the top document completed must not poison
+  // all-frame calls, and must itself become reachable without re-claiming the tab.
+  rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: { type: "click", target: { locator: { by: "css", value: "#mount-late-frame" } } },
+  });
+  rpc("condition.wait", {
+    ...base,
+    condition: {
+      locator: { by: "label", value: "Frame input", exact: true, framePath: [{ by: "css", value: "#late-frame" }] },
+      state: "visible",
+      timeoutMs: 15_000,
+    },
+  });
+  const topAfterLateFrame = rpc("locator.query", {
+    ...base,
+    locator: { by: "role", role: "button", name: { text: "Mount late frame", exact: true } },
+  });
+  if (topAfterLateFrame.count !== 1)
+    throw new Error(`top-frame query after late frame mount count = ${topAfterLateFrame.count}`);
+  observation = rpc("observation.capture", { ...base, options: { screenshot: false } });
+  epoch = observation.documentEpoch;
+  rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: {
+      type: "fill",
+      target: { locator: { by: "label", value: "Frame input", exact: true, framePath: [{ by: "css", value: "#late-frame" }] } },
+      value: "late frame value",
+    },
+  });
+  rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: {
+      type: "click",
+      target: {
+        locator: {
+          by: "role",
+          role: "button",
+          name: { text: "Set frame value", exact: true },
+          framePath: [{ by: "css", value: "#late-frame" }],
+        },
+      },
+    },
+  });
+  rpc("condition.wait", {
+    ...base,
+    condition: {
+      locator: { by: "text", value: "late frame value", framePath: [{ by: "css", value: "#late-frame" }] },
+      state: "visible",
+      timeoutMs: 10_000,
+    },
+  });
+
   rpc("action.perform", {
     ...base,
     operationId: operationId(),
@@ -174,27 +233,21 @@ try {
   observation = rpc("observation.capture", { ...base, options: { screenshot: false } });
   epoch = observation.documentEpoch;
 
-  const confirmationOperation = operationId();
-  const confirmationError = rpc("action.perform", {
+  // Interactive approval was removed: a caller's `confirmation.required` is
+  // ignored and the action runs immediately.
+  const submitted = rpc("action.perform", {
     ...base,
-    operationId: confirmationOperation,
+    operationId: operationId(),
     expectedDocumentEpoch: epoch,
     action: { type: "click", target: { locator: { by: "testId", value: "submit-profile" } } },
     confirmation: { required: true, reason: "submit fixture profile" },
-  }, "CONFIRMATION_REQUIRED");
-  const confirmationId = confirmationError.data?.confirmationId;
-  if (!confirmationId) throw new Error("confirmation error omitted confirmationId");
-  const confirmation = rpc("confirmation.get", {
-    sessionId: session.sessionId,
-    confirmationId,
   });
-  if (confirmation.status !== "pending" || confirmation.requestHash?.length !== 64) {
-    throw new Error(`invalid pending confirmation: ${JSON.stringify(confirmation)}`);
-  }
+  if ((submitted.result ?? submitted).performed !== true)
+    throw new Error(`submit was not performed: ${JSON.stringify(submitted)}`);
 
   rpc("browser.stop", { sessionId: session.sessionId, browserInstanceId, reason: "chrome e2e complete" });
   stopped = true;
-  process.stdout.write(`${JSON.stringify({ ok: true, browserInstanceId, tabId: fixtureTab.tabId, confirmationId })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, browserInstanceId, tabId: fixtureTab.tabId })}\n`);
 } finally {
   if (!stopped) {
     try {
