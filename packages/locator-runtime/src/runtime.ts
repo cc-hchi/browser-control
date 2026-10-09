@@ -526,6 +526,10 @@ export class LocatorRuntime implements LocatorRuntimeApi {
     return true;
   }
 
+  probeDocument(nonce: string): void {
+    document.documentElement.setAttribute(PROBE_ATTRIBUTE, nonce);
+  }
+
   clearProbe(nonce: string): void {
     for (const element of collectElements(document, true)) {
       if (element.getAttribute(PROBE_ATTRIBUTE) === nonce)

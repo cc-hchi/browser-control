@@ -240,6 +240,50 @@ try {
   observation = rpc("observation.capture", { ...base, options: { screenshot: false } });
   epoch = observation.documentEpoch;
 
+  // unsafe.evaluate can address any observed frame by frameId, including a
+  // cross-origin one, without knowing a CDP session id.
+  const lateNode = rpc("locator.query", {
+    ...base,
+    locator: { by: "label", value: "Frame input", exact: true, framePath: [{ by: "css", value: "#late-frame" }] },
+  }).nodes[0];
+  const lateFrameId = Number(/^f(\d+)_/.exec(lateNode.nodeRef)?.[1] ?? lateNode.frameId);
+  const frameEval = rpc("unsafe.evaluate", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    frameId: lateFrameId,
+    expression: "({ origin: location.origin, level: document.querySelector('#level').textContent, value: document.querySelector('input').value })",
+  });
+  const evalValue = (frameEval.result ?? frameEval).result?.value ?? frameEval.result?.value;
+  if (evalValue?.level !== "3" || evalValue?.value !== "late frame value" || !String(evalValue?.origin).endsWith(String(fixturePort + 1)))
+    throw new Error(`frame-scoped evaluate returned ${JSON.stringify(frameEval)}`);
+  const frameEvalError = rpc("unsafe.evaluate", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    frameId: lateFrameId,
+    expression: "(() => { throw new Error('boom') })()",
+  });
+  if (!JSON.stringify(frameEvalError).includes("boom"))
+    throw new Error(`frame-scoped evaluate hid the exception: ${JSON.stringify(frameEvalError)}`);
+  // Strict-CSP frame (no 'unsafe-eval'): evaluation must still work, and locator
+  // actions inside it must work too.
+  const cspNode = rpc("locator.query", {
+    ...base,
+    locator: { by: "label", value: "CSP input", exact: true, framePath: [{ by: "css", value: "#csp-frame" }] },
+  }).nodes[0];
+  if (!cspNode) throw new Error("strict-CSP frame input not found");
+  const cspFrameId = Number(/^f(\d+)_/.exec(cspNode.nodeRef)?.[1] ?? cspNode.frameId);
+  const cspEval = rpc("unsafe.evaluate", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    frameId: cspFrameId,
+    expression: "document.querySelector('#csp-level').textContent",
+  });
+  if ((cspEval.result ?? cspEval).result?.value !== "strict")
+    throw new Error(`strict-CSP frame evaluate returned ${JSON.stringify(cspEval)}`);
+
   // A coordinate click from a screenshot taken before the layout moved must act
   // on the element that was under the point, not on whatever is there now.
   rpc("action.perform", {

@@ -165,7 +165,7 @@ var methodOptional = map[string][]string{
 	"download.wait": {"downloadId", "timeoutMs"}, "content.export": {"format"},
 	"artifact.get": {"includeLocalPath"}, "artifact.readChunk": {"offset", "length"}, "operation.wait": {"timeoutMs"},
 	"event.next": {"timeoutMs"}, "event.replay": {"afterSeq"}, "secureInput.request": {"label", "secret", "autocomplete"},
-	"unsafe.evaluate": {"awaitPromise", "returnByValue", "userGesture", "targetSessionId"}, "unsafe.cdp.send": {"params", "targetSessionId"},
+	"unsafe.evaluate": {"awaitPromise", "returnByValue", "userGesture", "targetSessionId", "frameId"}, "unsafe.cdp.send": {"params", "targetSessionId"},
 }
 
 var methodExamples = map[string]map[string]any{

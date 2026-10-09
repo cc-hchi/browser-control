@@ -151,6 +151,8 @@ export interface LocatorRuntimeApi {
     nonce: string,
     expectedElementIdentity?: string,
   ): boolean;
+  /** Tags this frame's documentElement so the debugger can find the frame. */
+  probeDocument(nonce: string): void;
   clearProbe(nonce: string): void;
   setSensitiveMask(enabled: boolean): void;
   viewport(): RuntimeViewport;

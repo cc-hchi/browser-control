@@ -95,7 +95,11 @@
         frame.id = "late-frame";
         frame.name = "late-frame";
         frame.src = `${secondaryOrigin}/frame/3`;
-        document.querySelector("#late-frame-host").replaceChildren(frame);
+        const strict = document.createElement("iframe");
+        strict.id = "csp-frame";
+        strict.name = "csp-frame";
+        strict.src = `${secondaryOrigin}/csp-frame`;
+        document.querySelector("#late-frame-host").replaceChildren(frame, strict);
       });
 
       document.querySelector('[data-testid="submit-profile"]').addEventListener("click", () => {

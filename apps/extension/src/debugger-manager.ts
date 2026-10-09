@@ -496,6 +496,52 @@ export class DebuggerManager {
     return undefined;
   }
 
+  /**
+   * Finds the frame whose document root carries the probe attribute and returns
+   * the CDP session and main-world execution context id for it, so callers can
+   * Runtime.evaluate there. CDP evaluation is not subject to the page's CSP.
+   */
+  async locateProbeFrame(
+    chromeTabId: number,
+    attribute: string,
+    nonce: string,
+  ): Promise<{ sessionId?: string; contextId: number } | undefined> {
+    const state = this.#states.get(chromeTabId);
+    if (!state) return undefined;
+    const query = `[${attribute}="${nonce.replace(/[^a-z0-9_]/gi, "")}"]`;
+    const sessions: Array<string | undefined> = [
+      undefined,
+      ...Array.from(state.sessions.values())
+        .filter((session) => session.type === "iframe")
+        .map((session) => session.sessionId),
+    ];
+    for (const sessionId of sessions) {
+      const nodeId = await this.#searchNode(chromeTabId, query, sessionId);
+      if (nodeId === undefined) continue;
+      // The tagged node is the frame's documentElement, which CDP reports with
+      // the owning frame id.
+      const described = (await this.send(
+        chromeTabId,
+        "DOM.describeNode",
+        { nodeId },
+        sessionId,
+      )) as { node?: { frameId?: string } };
+      const frameId = described.node?.frameId;
+      if (!frameId) return undefined;
+      for (const context of state.contexts.values()) {
+        const aux = (context.auxData ?? {}) as Record<string, unknown>;
+        if (
+          context.sessionId === sessionId &&
+          aux.frameId === frameId &&
+          aux.isDefault === true
+        )
+          return { sessionId, contextId: Number(context.id) };
+      }
+      return undefined;
+    }
+    return undefined;
+  }
+
   async #searchNode(
     chromeTabId: number,
     query: string,

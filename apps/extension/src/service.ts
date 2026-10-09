@@ -1942,6 +1942,8 @@ export class ExtensionService {
   ): Promise<Record<string, unknown>> {
     const state = this.#claimed(params);
     const expression = requiredString(params, "expression");
+    if (params.frameId !== undefined && params.targetSessionId === undefined)
+      return this.#evaluateInFrame(state, Number(params.frameId), expression, params);
     const result = await this.#debugger.send(
       state.chromeTabId,
       "Runtime.evaluate",
@@ -1956,6 +1958,102 @@ export class ExtensionService {
         : undefined,
     );
     return record(result);
+  }
+
+  // Evaluates in the page's main world of one frame, addressed by the same
+  // frameId that observations and node references use (`f<frameId>_...`).
+  // Works for cross-origin and out-of-process frames without a CDP session id.
+  // The result mirrors Runtime.evaluate: { result: { type, value } } or
+  // { exceptionDetails }.
+  async #evaluateInFrame(
+    state: TabState,
+    frameId: number,
+    expression: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!Number.isInteger(frameId) || frameId < 0)
+      throw new RpcError("INVALID_REQUEST", "frameId must be a non-negative integer");
+    // Prefer CDP: Runtime.evaluate is not subject to the page's CSP, so it also
+    // works on hosted payment and sign-in pages that forbid 'unsafe-eval'.
+    if (this.#debugger.isAttached(state.chromeTabId)) {
+      const nonce = randomId("probe").replace(/[^a-z0-9_]/gi, "");
+      try {
+        await this.#invokeFrame(state.chromeTabId, frameId, "probeDocument", [nonce]);
+        const located = await this.#debugger.locateProbeFrame(
+          state.chromeTabId,
+          PROBE_ATTRIBUTE,
+          nonce,
+        );
+        if (located) {
+          await this.#invokeFrame(state.chromeTabId, frameId, "clearProbe", [nonce]).catch(
+            () => undefined,
+          );
+          const result = await this.#debugger.send(
+            state.chromeTabId,
+            "Runtime.evaluate",
+            {
+              expression,
+              contextId: located.contextId,
+              awaitPromise: params.awaitPromise !== false,
+              returnByValue: params.returnByValue !== false,
+              userGesture: params.userGesture === true,
+            },
+            located.sessionId,
+          );
+          return { ...record(result), frameId };
+        }
+      } finally {
+        await this.#invokeFrame(state.chromeTabId, frameId, "clearProbe", [nonce]).catch(
+          () => undefined,
+        );
+      }
+    }
+    let results: chrome.scripting.InjectionResult<unknown>[];
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: state.chromeTabId, frameIds: [frameId] },
+        world: "MAIN",
+        func: async (source: string, awaitPromise: boolean) => {
+          try {
+            // Indirect eval runs the expression in the frame's global scope.
+            let value: unknown = (0, eval)(source);
+            if (awaitPromise && value && typeof (value as Promise<unknown>).then === "function")
+              value = await value;
+            let serialized: unknown;
+            try {
+              serialized = JSON.parse(JSON.stringify(value ?? null));
+            } catch {
+              serialized = String(value);
+            }
+            return { ok: true, type: typeof value, value: serialized };
+          } catch (error) {
+            return {
+              ok: false,
+              text: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            };
+          }
+        },
+        args: [expression, params.awaitPromise !== false],
+      });
+    } catch (error) {
+      throw new RpcError(
+        "FRAME_UNAVAILABLE",
+        `cannot evaluate in frame ${frameId}: ${error instanceof Error ? error.message : String(error)}`,
+        { retryable: true },
+      );
+    }
+    const first = results[0];
+    const error = first ? errorOf(first) : undefined;
+    if (!first || error)
+      throw new RpcError(
+        "FRAME_UNAVAILABLE",
+        `cannot evaluate in frame ${frameId}${error ? `: ${String((error as { message?: unknown }).message ?? error)}` : ""}`,
+        { retryable: true },
+      );
+    const outcome = record(first.result);
+    if (outcome.ok !== true)
+      return { exceptionDetails: { text: String(outcome.text ?? "evaluation failed") }, frameId };
+    return { result: { type: outcome.type, value: outcome.value }, frameId };
   }
 
   async #unsafeCdp(params: Record<string, unknown>): Promise<unknown> {

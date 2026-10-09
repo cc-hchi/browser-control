@@ -42,6 +42,20 @@ function handler(request, response) {
     return;
   }
 
+  // A frame with a strict CSP (no 'unsafe-eval', no inline script), like hosted
+  // payment pages, to prove frame-scoped evaluation does not depend on page eval.
+  if (url.pathname === "/csp-frame") {
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": "default-src 'none'; style-src 'self'",
+    });
+    response.end(
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>CSP frame</title></head>' +
+        '<body><h1 id="csp-level">strict</h1><label>CSP input <input name="csp-value" /></label></body></html>',
+    );
+    return;
+  }
+
   let relative;
   if (url.pathname === "/") relative = "index.html";
   else if (url.pathname === "/popup") relative = "popup.html";
