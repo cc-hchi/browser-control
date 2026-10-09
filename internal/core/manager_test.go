@@ -584,3 +584,35 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func TestForceClaimTakesOverLiveLease(t *testing.T) {
+	m := newTestManager(t, time.Minute)
+	first := m.OpenSession("first", "test")
+	second := m.OpenSession("second", "test")
+
+	lease, rpcErr := m.ClaimTab(first.SessionID, "tab-1", 0)
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+
+	// Default behavior unchanged: the conflict remains.
+	if _, rpcErr = m.ClaimTab(second.SessionID, "tab-1", 0); rpcErr == nil {
+		t.Fatal("second claim without force must still conflict")
+	} else {
+		assertRPCError(t, rpcErr, protocol.CodeLeaseConflict, "LEASE_CONFLICT")
+	}
+
+	taken, rpcErr := m.ClaimTabForce(second.SessionID, "tab-1", 0, true)
+	if rpcErr != nil {
+		t.Fatalf("force claim: %v", rpcErr)
+	}
+	if taken.SessionID != second.SessionID || taken.LeaseID == lease.LeaseID {
+		t.Fatalf("force claim returned %+v", taken)
+	}
+	if _, ok := m.LeaseForTab("tab-1"); !ok {
+		t.Fatal("tab has no lease after takeover")
+	}
+	if _, rpcErr = m.RenewLease(first.SessionID, "tab-1", lease.LeaseID, 0); rpcErr == nil {
+		t.Fatal("previous lease must be dead after takeover")
+	}
+}

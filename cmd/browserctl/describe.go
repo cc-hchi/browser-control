@@ -158,7 +158,7 @@ var methodOptional = map[string][]string{
 	"session.open": {"name", "clientId"}, "session.requestCapabilities": {"browserInstanceId", "timeoutMs"},
 	"browser.list": {"browserInstanceId"}, "browser.history.query": {"text", "startTime", "endTime", "maxResults"},
 	"tab.list": {"sessionId", "browserInstanceId", "active", "currentWindow", "windowId"}, "tab.get": {"sessionId"}, "tab.open": {"url", "active", "windowId"},
-	"tab.claim": {"browserInstanceId", "leaseTtlMs"}, "tab.lease.renew": {"leaseTtlMs"}, "tab.release": {"reason"},
+	"tab.claim": {"browserInstanceId", "leaseTtlMs", "force"}, "tab.lease.renew": {"leaseTtlMs"}, "tab.release": {"reason"},
 	"observation.capture": {"maxNodes", "include", "screenshot"}, "locator.query": {"snapshotId"},
 	"action.perform": {"confirmation", "confirmationId", "confirmationTimeoutMs", "expect", "observeAfter", "timeoutMs"}, "condition.wait": {"timeoutMs"},
 	"dialog.respond": {"accept", "promptText"}, "clipboard.write": {"text", "html", "items"},

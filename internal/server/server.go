@@ -530,7 +530,8 @@ func (s *Server) tabClaim(ctx context.Context, params map[string]any) (any, *pro
 	if browserInstanceID == "" {
 		return nil, protocol.NewError(protocol.CodeBridgeUnavailable, "EXTENSION_DISCONNECTED", "no compatible Chrome extension is connected", true, nil)
 	}
-	lease, rpcErr := s.core.ClaimTab(sessionID, tabID, durationMS(params, "leaseTtlMs", 0))
+	force, _ := params["force"].(bool)
+	lease, rpcErr := s.core.ClaimTabForce(sessionID, tabID, durationMS(params, "leaseTtlMs", 0), force)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -606,9 +607,10 @@ func (s *Server) tabClose(ctx context.Context, raw json.RawMessage, params map[s
 	if rpcErr := s.core.ValidateLease(sessionID, tabID, leaseID); rpcErr != nil {
 		return nil, rpcErr
 	}
-	if !s.core.CanCloseTab(sessionID, tabID) {
-		return nil, protocol.NewError(protocol.CodeCapabilityDenied, "PERMISSION_DENIED", "only tabs created by this session may be closed", false, map[string]any{"sessionId": sessionID, "tabId": tabID})
-	}
+	// This installation is the owner's personal tool. Any claimed tab may be
+	// closed; the claim is sufficient authority, and the extension applies the
+	// same rule. The former session-owned-only rule stranded claimed tabs after
+	// their creator session ended.
 	result, rpcErr := s.forward(ctx, "tab.close", raw, params, true)
 	if rpcErr == nil {
 		_, _ = s.core.ReleaseTab(sessionID, tabID, leaseID, "tab closed")

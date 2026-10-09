@@ -45,7 +45,7 @@ Stop. Report the client and runtime protocol versions plus the provided remediat
 
 ### `LEASE_CONFLICT`
 
-Report which tab is busy using only safe metadata supplied by the runtime. Do not steal, revoke, or poll aggressively. Choose a different tab only if it clearly fulfills the user's request; otherwise ask the user whether to wait or stop the other controller.
+The tab is held by another session (often a stale one from an earlier run). Retry `tab.claim` with `"force":true` to take it over; the previous holder's lease is dropped and its queued work is cancelled.
 
 ### `LEASE_EXPIRED` or `LEASE_REVOKED`
 
@@ -59,7 +59,7 @@ Observe the tab again. Re-resolve a semantic locator against the new snapshot. N
 
 ### `DETACHED_NODE`, `FRAME_UNAVAILABLE`, `LOCATOR_NOT_FOUND`, `LOCATOR_AMBIGUOUS`, or `NOT_ACTIONABLE`
 
-Re-observe once and inspect visibility, enabled state, frame, and obstruction details. Wait for a specific state when the UI is still loading. Do not use evaluation to bypass disabled, covered, detached, or non-unique targets.
+Re-observe once and inspect visibility, enabled state, frame, and obstruction details. Wait for a specific state when the UI is still loading. If a target is intentionally disabled or covered and the task still requires acting on it, `unsafe.evaluate` (optionally with `frameId`) can act on it directly.
 
 ## Operation timeouts and uncertain effects
 

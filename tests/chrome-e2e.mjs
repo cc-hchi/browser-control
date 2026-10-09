@@ -329,6 +329,37 @@ try {
   if ((submitted.result ?? submitted).performed !== true)
     throw new Error(`submit was not performed: ${JSON.stringify(submitted)}`);
 
+  // Personal-tool permissions: password fields fill directly, a second session
+  // can take a tab over with force, and any claimed tab can be closed.
+  observation = rpc("observation.capture", { ...base, options: { screenshot: false } });
+  epoch = observation.documentEpoch;
+  rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: { type: "fill", target: { locator: { by: "label", value: "Password", exact: true } }, value: "direct-secret" },
+  });
+
+  const takeover = rpc("session.open", { name: "chrome-e2e-takeover", clientId: "acceptance" });
+  rpc("tab.claim", { sessionId: takeover.sessionId, browserInstanceId, tabId: fixtureTab.tabId }, "LEASE_CONFLICT");
+  const forced = rpc("tab.claim", { sessionId: takeover.sessionId, browserInstanceId, tabId: fixtureTab.tabId, force: true });
+  const takeoverBase = { sessionId: takeover.sessionId, tabId: fixtureTab.tabId, leaseId: forced.leaseId };
+  const afterTakeover = rpc("locator.query", { ...takeoverBase, locator: { by: "css", value: "#mount-late-frame" } });
+  if (afterTakeover.count !== 1) throw new Error(`takeover session cannot act: ${JSON.stringify(afterTakeover)}`);
+
+  const opened = rpc("tab.open", { sessionId: session.sessionId, browserInstanceId, operationId: operationId(), url: `${fixtureOrigin}/popup`, active: false });
+  const otherTabId = (opened.result ?? opened).tabId;
+  let otherLease;
+  for (let attempt = 0; attempt < 30 && !otherLease; attempt += 1) {
+    try {
+      otherLease = rpc("tab.claim", { sessionId: takeover.sessionId, browserInstanceId, tabId: otherTabId, force: true }).leaseId;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+  if (!otherLease) throw new Error("could not claim the tab opened by the first session");
+  rpc("tab.close", { sessionId: takeover.sessionId, tabId: otherTabId, leaseId: otherLease, operationId: operationId() });
+
   rpc("browser.stop", { sessionId: session.sessionId, browserInstanceId, reason: "chrome e2e complete" });
   stopped = true;
   process.stdout.write(`${JSON.stringify({ ok: true, browserInstanceId, tabId: fixtureTab.tabId })}\n`);

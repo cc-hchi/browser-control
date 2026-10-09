@@ -547,6 +547,12 @@ func (m *Manager) StopAll(reason string) []Lease {
 }
 
 func (m *Manager) ClaimTab(sessionID, tabID string, ttl time.Duration) (Lease, *protocol.RPCError) {
+	return m.ClaimTabForce(sessionID, tabID, ttl, false)
+}
+
+// ClaimTabForce claims a tab; with force it takes the tab over from another
+// session's live lease instead of returning LEASE_CONFLICT.
+func (m *Manager) ClaimTabForce(sessionID, tabID string, ttl time.Duration, force bool) (Lease, *protocol.RPCError) {
 	if tabID == "" {
 		return Lease{}, protocol.InvalidParams("tabId is required", nil)
 	}
@@ -563,8 +569,20 @@ func (m *Manager) ClaimTab(sessionID, tabID string, ttl time.Duration) (Lease, *
 				current.ExpiresAt = now.Add(m.effectiveTTL(ttl))
 				return cloneLease(current), nil
 			}
-			return Lease{}, protocol.NewError(protocol.CodeLeaseConflict, "LEASE_CONFLICT", "tab is claimed by another session", true, map[string]any{"tabId": tabID, "expiresAt": current.ExpiresAt})
+			if !force {
+				return Lease{}, protocol.NewError(protocol.CodeLeaseConflict, "LEASE_CONFLICT", "tab is claimed by another session", true, map[string]any{"tabId": tabID, "expiresAt": current.ExpiresAt, "force": "retry tab.claim with force:true to take over"})
+			}
+			// Explicit takeover: drop the holder's lease and cancel its queued work.
+			// The extension-side claim is overwritten by the forced claim itself;
+			// the expiry hook is skipped because its asynchronous tab.release
+			// would race with, and clear, the new claim.
+			delete(m.leases, tabID)
+			m.cancelOperationsLocked(current.SessionID, tabID, "lease taken over")
+			m.cancelTabQueue(tabID, "lease taken over")
+			m.emitLocked(Event{Type: "lease.expired", SessionID: current.SessionID, TabID: tabID, Payload: protocol.MarshalResult(map[string]any{"leaseId": current.LeaseID, "reason": "taken over"})})
 		}
+	}
+	if current, ok := m.leases[tabID]; ok && current != nil {
 		expired := cloneLease(current)
 		delete(m.leases, tabID)
 		m.cancelOperationsLocked(current.SessionID, tabID, "expired lease replaced")

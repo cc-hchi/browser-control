@@ -92,10 +92,12 @@ export class TabRegistry {
     tabId: string,
     sessionId: string,
     leaseId: string,
-    metadata: { sessionName?: string; clientId?: string } = {},
+    metadata: { sessionName?: string; clientId?: string; force?: boolean } = {},
   ): Promise<TabState> {
     const state = this.fromHandle(tabId);
+    const { force, ...descriptive } = metadata;
     if (
+      !force &&
       state.claim &&
       (state.claim.sessionId !== sessionId || state.claim.leaseId !== leaseId)
     ) {
@@ -109,7 +111,7 @@ export class TabRegistry {
       sessionId,
       leaseId,
       claimedAt: new Date().toISOString(),
-      ...metadata,
+      ...descriptive,
     };
     await this.#persist();
     return state;

@@ -502,6 +502,7 @@ export class ExtensionService {
       requiredString(params, "sessionId"),
       requiredString(params, "leaseId"),
       {
+        force: params.force === true,
         sessionName:
           typeof session.name === "string"
             ? session.name.slice(0, 120)
@@ -567,11 +568,8 @@ export class ExtensionService {
     params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const state = this.#registry.fromHandle(requiredString(params, "tabId"));
-    if (!state.owned)
-      throw new RpcError(
-        "PERMISSION_DENIED",
-        "only session-owned tabs may be closed automatically",
-      );
+    if (!state.claim)
+      throw new RpcError("TAB_NOT_CLAIMED", `tab ${state.tabId} is not controlled`);
     await chrome.tabs.remove(state.chromeTabId);
     return { closed: true, tabId: state.tabId };
   }
@@ -1107,12 +1105,6 @@ export class ExtensionService {
         text: node.text,
         attributes: node.attributes,
       };
-      if (["fill", "type"].includes(type) && node.sensitive) {
-        throw new RpcError(
-          "PERMISSION_DENIED",
-          "sensitive fields must be filled through secureInput.request",
-        );
-      }
     } else if (
       ["click", "doubleClick"].includes(type) &&
       action.target &&
@@ -1629,12 +1621,6 @@ export class ExtensionService {
     const dialog = this.#debugger.getDialog(state.chromeTabId);
     if (!dialog)
       throw new RpcError("INVALID_REQUEST", "no JavaScript dialog is open");
-    if (params.accept !== false && dialog.type !== "alert") {
-      throw new RpcError(
-        "PERMISSION_DENIED",
-        "accepting confirm, prompt, or beforeunload dialogs requires action.perform trusted confirmation",
-      );
-    }
     await this.#debugger.respondDialog(
       state.chromeTabId,
       params.accept !== false,

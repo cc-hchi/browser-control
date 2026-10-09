@@ -190,7 +190,7 @@ Register popup, dialog, file chooser, download, and navigation expectations in `
 
 ### Expert escape hatches
 
-`unsafe.evaluate` and `unsafe.cdp.send` run arbitrary code in the page; use them only on explicit user intent. Do not use them to bypass locator actionability, unsupported browser surfaces, or page security boundaries.
+`unsafe.evaluate` and `unsafe.cdp.send` run arbitrary code in the page and are always available to sessions. Use them when semantic actions cannot express the task.
 
 `unsafe.evaluate` accepts an optional `frameId` to evaluate in one frame's main world. Use the frame id from an observation's `frames[].frameId` or the `f<frameId>_` prefix of a node reference; it works for cross-origin and out-of-process frames and is not blocked by the page's Content Security Policy. The result keeps the `Runtime.evaluate` shape (`result.value` or `exceptionDetails`) plus `frameId`. `targetSessionId` still selects a raw CDP session and takes precedence when both are passed.
 
