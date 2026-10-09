@@ -1,3 +1,6 @@
+/** Attribute the runtime sets so the debugger can locate an element across frames. */
+export const PROBE_ATTRIBUTE = "data-browser-control-probe";
+
 export type TextMatcher = string | { text: string; exact?: boolean };
 
 export interface Locator {
@@ -138,6 +141,17 @@ export interface LocatorRuntimeApi {
     target: { locator: Locator } | { snapshotId: string; nodeRef: string },
     expectedElementIdentity?: string,
   ): NodeDescription;
+  /**
+   * Tags the resolved element with a one-time probe attribute so the trusted
+   * debugger can locate it across frame/process boundaries. Returns false when
+   * the identity no longer matches.
+   */
+  probe(
+    target: { locator: Locator } | { snapshotId: string; nodeRef: string },
+    nonce: string,
+    expectedElementIdentity?: string,
+  ): boolean;
+  clearProbe(nonce: string): void;
   setSensitiveMask(enabled: boolean): void;
   viewport(): RuntimeViewport;
   exportContent(format: "html" | "text" | "markdown"): string;

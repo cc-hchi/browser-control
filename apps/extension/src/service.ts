@@ -5,6 +5,7 @@ import type {
   RuntimeSnapshot,
   SnapshotOptions,
 } from "../../../packages/locator-runtime/src/types.js";
+import { PROBE_ATTRIBUTE } from "../../../packages/locator-runtime/src/types.js";
 import { DebuggerManager } from "./debugger-manager.js";
 import type { BridgeState, NativeBridge } from "./native-bridge.js";
 import { RpcError, record, requiredString, randomId } from "./shared.js";
@@ -1228,7 +1229,14 @@ export class ExtensionService {
     if (!["click", "doubleClick", "hover", "move"].includes(type))
       throw new RpcError("INVALID_REQUEST", `unsupported action type: ${type}`);
 
-    const bounds = prepared.node.topRect ?? prepared.node.rect;
+    let bounds = prepared.node.topRect ?? prepared.node.rect;
+    if (!prepared.node.canTranslateToTop) {
+      const located = await this.#locateAcrossFrames(state, prepared);
+      if (located) {
+        bounds = located;
+        prepared.node = { ...prepared.node, topRect: located, canTranslateToTop: true };
+      }
+    }
     if (!prepared.node.canTranslateToTop) {
       const fallbackType = type === "move" ? "hover" : type;
       const result = await this.#invokeFrame<Record<string, unknown>>(
@@ -1268,6 +1276,42 @@ export class ExtensionService {
       point,
       target: prepared.node,
     };
+  }
+
+  // A cross-origin frame cannot read `window.frameElement`, so the runtime cannot
+  // compute a top-level rect itself. Tag the element, let the debugger find it in
+  // whichever target hosts the frame, and translate up the frame-owner chain.
+  async #locateAcrossFrames(
+    state: TabState,
+    prepared: { frameId: number; localTarget: Record<string, unknown>; node: NodeDescription },
+  ): Promise<{ x: number; y: number; width: number; height: number } | undefined> {
+    if (!this.#debugger.isAttached(state.chromeTabId)) return undefined;
+    const nonce = randomId("probe").replace(/[^a-z0-9_]/gi, "");
+    const tagged = await this.#invokeFrame<boolean>(
+      state.chromeTabId,
+      prepared.frameId,
+      "probe",
+      [prepared.localTarget, nonce, prepared.node.elementIdentity],
+    );
+    if (!tagged)
+      throw new RpcError(
+        "STALE_REFERENCE",
+        "the resolved target element changed before execution",
+        { retryable: true },
+      );
+    try {
+      return await this.#debugger.locateProbe(
+        state.chromeTabId,
+        PROBE_ATTRIBUTE,
+        nonce,
+      );
+    } catch {
+      return undefined;
+    } finally {
+      await this.#invokeFrame(state.chromeTabId, prepared.frameId, "clearProbe", [
+        nonce,
+      ]).catch(() => undefined);
+    }
   }
 
   async #prepareTarget(
@@ -1349,12 +1393,14 @@ export class ExtensionService {
       return this.#point(target.point);
     }
     const prepared = await this.#prepareTarget(state, target);
-    if (!prepared.node.canTranslateToTop)
+    const rect = prepared.node.canTranslateToTop
+      ? (prepared.node.topRect ?? prepared.node.rect)
+      : await this.#locateAcrossFrames(state, prepared);
+    if (!rect)
       throw new RpcError(
         "FRAME_UNAVAILABLE",
         "cannot translate this frame to top-level coordinates",
       );
-    const rect = prepared.node.topRect ?? prepared.node.rect;
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   }
 

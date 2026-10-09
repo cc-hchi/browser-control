@@ -198,21 +198,28 @@ try {
       value: "late frame value",
     },
   });
+  const lateFrameButton = {
+    by: "role",
+    role: "button",
+    name: { text: "Set frame value", exact: true },
+    framePath: [{ by: "css", value: "#late-frame" }],
+  };
+  // Cross-origin frames cannot translate their own coordinates; the click must
+  // still be delivered as trusted CDP input rather than a synthetic DOM event.
+  const crossOriginClick = rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: { type: "click", target: { locator: lateFrameButton } },
+  });
+  const clickResult = crossOriginClick.result?.action ?? crossOriginClick.action ?? crossOriginClick.result ?? crossOriginClick;
+  if (clickResult.inputMode !== "cdp")
+    throw new Error(`cross-origin click input mode = ${clickResult.inputMode}: ${JSON.stringify(crossOriginClick)}`);
   rpc("action.perform", {
     ...base,
     operationId: operationId(),
     expectedDocumentEpoch: epoch,
-    action: {
-      type: "click",
-      target: {
-        locator: {
-          by: "role",
-          role: "button",
-          name: { text: "Set frame value", exact: true },
-          framePath: [{ by: "css", value: "#late-frame" }],
-        },
-      },
-    },
+    action: { type: "scroll", target: { locator: lateFrameButton }, delta: { y: 120 } },
   });
   rpc("condition.wait", {
     ...base,

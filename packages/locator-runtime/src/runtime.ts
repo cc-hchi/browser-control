@@ -19,6 +19,7 @@ import type {
   RuntimeViewport,
   SnapshotOptions,
 } from "./types.js";
+import { PROBE_ATTRIBUTE } from "./types.js";
 
 const VERSION = "1.0.0";
 const MAX_SNAPSHOTS = 8;
@@ -508,6 +509,28 @@ export class LocatorRuntime implements LocatorRuntimeApi {
       inputMode: "dom",
       target: this.#describe(element, ref, true),
     };
+  }
+
+  probe(
+    target: { locator: Locator } | { snapshotId: string; nodeRef: string },
+    nonce: string,
+    expectedElementIdentity?: string,
+  ): boolean {
+    const { element } = this.#resolveTarget(target);
+    if (
+      expectedElementIdentity &&
+      this.#identity(element) !== expectedElementIdentity
+    )
+      return false;
+    element.setAttribute(PROBE_ATTRIBUTE, nonce);
+    return true;
+  }
+
+  clearProbe(nonce: string): void {
+    for (const element of collectElements(document, true)) {
+      if (element.getAttribute(PROBE_ATTRIBUTE) === nonce)
+        element.removeAttribute(PROBE_ATTRIBUTE);
+    }
   }
 
   markSensitive(

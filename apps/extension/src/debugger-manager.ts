@@ -427,6 +427,106 @@ export class DebuggerManager {
     };
   }
 
+  /**
+   * Finds the element tagged by the locator runtime's probe attribute in any
+   * attached target and returns its border box in top-level viewport CSS
+   * pixels. This reaches cross-origin frames, in-process or out-of-process,
+   * where `window.frameElement` cannot be read from inside the frame.
+   */
+  async locateProbe(
+    chromeTabId: number,
+    attribute: string,
+    nonce: string,
+  ): Promise<
+    { x: number; y: number; width: number; height: number } | undefined
+  > {
+    const state = this.#states.get(chromeTabId);
+    if (!state) return undefined;
+    const query = `[${attribute}="${nonce.replace(/[^a-z0-9_]/gi, "")}"]`;
+    const sessions: Array<string | undefined> = [
+      undefined,
+      ...Array.from(state.sessions.values())
+        .filter((session) => session.type === "iframe")
+        .map((session) => session.sessionId),
+    ];
+    for (const sessionId of sessions) {
+      const nodeId = await this.#searchNode(chromeTabId, query, sessionId);
+      if (nodeId === undefined) continue;
+      const quads = (await this.send(
+        chromeTabId,
+        "DOM.getContentQuads",
+        { nodeId },
+        sessionId,
+      )) as { quads?: number[][] };
+      const box = quadBounds(quads.quads?.[0]);
+      if (!box) return undefined;
+      let current = sessionId;
+      while (current) {
+        const session = state.sessions.get(current);
+        if (!session) return undefined;
+        const owner = (await this.send(
+          chromeTabId,
+          "DOM.getFrameOwner",
+          { frameId: session.targetId },
+          session.parentSessionId,
+        )) as { backendNodeId?: number };
+        if (!owner.backendNodeId) return undefined;
+        // The element was already scrolled into view inside its own frame; make
+        // sure the frame itself is visible in its parent as well.
+        await this.send(
+          chromeTabId,
+          "DOM.scrollIntoViewIfNeeded",
+          { backendNodeId: owner.backendNodeId },
+          session.parentSessionId,
+        ).catch(() => undefined);
+        const model = (await this.send(
+          chromeTabId,
+          "DOM.getBoxModel",
+          { backendNodeId: owner.backendNodeId },
+          session.parentSessionId,
+        )) as { model?: { content?: number[] } };
+        const content = quadBounds(model.model?.content);
+        if (!content) return undefined;
+        box.x += content.x;
+        box.y += content.y;
+        current = session.parentSessionId;
+      }
+      return box;
+    }
+    return undefined;
+  }
+
+  async #searchNode(
+    chromeTabId: number,
+    query: string,
+    sessionId?: string,
+  ): Promise<number | undefined> {
+    await this.send(chromeTabId, "DOM.getDocument", { depth: 0 }, sessionId);
+    const search = (await this.send(
+      chromeTabId,
+      "DOM.performSearch",
+      { query },
+      sessionId,
+    )) as { searchId: string; resultCount: number };
+    try {
+      if (!search.resultCount) return undefined;
+      const results = (await this.send(
+        chromeTabId,
+        "DOM.getSearchResults",
+        { searchId: search.searchId, fromIndex: 0, toIndex: 1 },
+        sessionId,
+      )) as { nodeIds?: number[] };
+      return results.nodeIds?.[0] || undefined;
+    } finally {
+      await this.send(
+        chromeTabId,
+        "DOM.discardSearchResults",
+        { searchId: search.searchId },
+        sessionId,
+      ).catch(() => undefined);
+    }
+  }
+
   async dispatchClick(
     chromeTabId: number,
     x: number,
@@ -817,6 +917,22 @@ export class DebuggerManager {
     if (existed)
       this.emit("debugger.detached", { chromeTabId: source.tabId, reason });
   }
+}
+
+/** Axis-aligned bounds of a CDP quad ([x1,y1, x2,y2, x3,y3, x4,y4]). */
+export function quadBounds(
+  quad: number[] | undefined,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (!quad || quad.length < 8 || quad.some((value) => !Number.isFinite(value)))
+    return undefined;
+  const xs = [quad[0]!, quad[2]!, quad[4]!, quad[6]!];
+  const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  const width = Math.max(...xs) - x;
+  const height = Math.max(...ys) - y;
+  if (width <= 0 || height <= 0) return undefined;
+  return { x, y, width, height };
 }
 
 function pngDimensions(
