@@ -240,6 +240,39 @@ try {
   observation = rpc("observation.capture", { ...base, options: { screenshot: false } });
   epoch = observation.documentEpoch;
 
+  // A coordinate click from a screenshot taken before the layout moved must act
+  // on the element that was under the point, not on whatever is there now.
+  rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: { type: "scroll", target: { locator: { by: "css", value: "#shift-target" } }, delta: { y: 0 } },
+  });
+  const shot = rpc("observation.capture", { ...base, include: { dom: "interactive" }, screenshot: true });
+  epoch = shot.documentEpoch;
+  const shiftTarget = rpc("locator.query", { ...base, locator: { by: "css", value: "#shift-target" } }).nodes[0];
+  const shiftRect = shiftTarget.topRect ?? shiftTarget.rect;
+  const stalePoint = { x: shiftRect.x + shiftRect.width / 2, y: shiftRect.y + shiftRect.height / 2 };
+  rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: { type: "click", target: { locator: { by: "css", value: "#shift-layout" } } },
+  });
+  const rebound = rpc("action.perform", {
+    ...base,
+    operationId: operationId(),
+    expectedDocumentEpoch: epoch,
+    action: { type: "click", target: { snapshotId: shot.snapshotId, point: stalePoint } },
+  });
+  const reboundAction = rebound.result?.action ?? rebound.action ?? {};
+  if (reboundAction.reboundFrom !== "point")
+    throw new Error(`stale coordinate click was not rebound: ${JSON.stringify(rebound)}`);
+  rpc("condition.wait", {
+    ...base,
+    condition: { locator: { by: "text", value: "shift target clicked" }, state: "visible", timeoutMs: 10_000 },
+  });
+
   // Interactive approval was removed: a caller's `confirmation.required` is
   // ignored and the action runs immediately.
   const submitted = rpc("action.perform", {

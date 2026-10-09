@@ -69,6 +69,10 @@
       <div id="overlay" hidden></div>
       <button id="show-overlay" type="button">Show overlay</button>
       <button id="remove-overlay" type="button">Remove overlay</button>
+      <div id="shift-host"></div>
+      <button id="shift-layout" type="button">Shift layout</button>
+      <button id="shift-target" type="button">Shifted target</button>
+      <output id="shift-result" aria-live="polite"></output>
     </section>
 
     <section aria-labelledby="injection-heading">
@@ -126,6 +130,18 @@
       document.querySelector("#remove-overlay").addEventListener("click", () => {
         document.querySelector("#overlay").hidden = true;
       });
+      // Pushes the following controls down, the way late banners and validation
+      // messages move a button after a screenshot was taken.
+      document.querySelector("#shift-layout").addEventListener("click", () => {
+        const banner = document.createElement("p");
+        banner.style.height = "80px";
+        banner.textContent = "Inserted banner";
+        document.querySelector("#shift-host").replaceChildren(banner);
+      });
+      document.querySelector("#shift-target").addEventListener("click", () => {
+        document.querySelector("#shift-result").textContent = "shift target clicked";
+      });
+
       document.querySelector("#show-overlay").addEventListener("click", () => {
         document.querySelector("#overlay").hidden = false;
       });

@@ -1118,7 +1118,16 @@ export class ExtensionService {
       action.target &&
       record(action.target).point
     ) {
-      await this.#validateCoordinateTarget(state, record(action.target));
+      try {
+        await this.#validateCoordinateTarget(state, record(action.target));
+      } catch (error) {
+        // The action itself rebinds a stale point to the element it covered.
+        if (
+          !(error instanceof RpcError && error.kind === "STALE_REFERENCE") ||
+          !this.#rebindCoordinateTarget(state, record(action.target))
+        )
+          throw error;
+      }
       targetIdentity = { coordinateTarget: action.target };
     }
 
@@ -1157,7 +1166,21 @@ export class ExtensionService {
   ): Promise<Record<string, unknown>> {
     const rawTarget = record(action.target);
     if ("point" in rawTarget) {
-      await this.#validateCoordinateTarget(state, rawTarget);
+      try {
+        await this.#validateCoordinateTarget(state, rawTarget);
+      } catch (error) {
+        const rebound =
+          error instanceof RpcError && error.kind === "STALE_REFERENCE"
+            ? this.#rebindCoordinateTarget(state, rawTarget)
+            : undefined;
+        if (!rebound) throw error;
+        const result = await this.#performTargetAction(
+          state,
+          { ...action, target: rebound },
+          type,
+        );
+        return { ...result, reboundFrom: "point" };
+      }
       const point = this.#point(rawTarget.point);
       if (type === "click" || type === "doubleClick") {
         await this.#debugger.dispatchClick(
@@ -1443,6 +1466,43 @@ export class ExtensionService {
       "INVALID_REQUEST",
       "drag endpoints require a locator, snapshot node, or snapshot-bound point",
     );
+  }
+
+  /**
+   * A coordinate target is bound to a screenshot. If the page moved since, the
+   * same point may now hit something else, so a blind retry is unsafe. Instead,
+   * find the smallest interactive snapshot node that covered the point when the
+   * screenshot was taken and return a node target for it; the caller re-resolves
+   * that element and acts on its current position.
+   */
+  #rebindCoordinateTarget(
+    state: TabState,
+    target: Record<string, unknown>,
+  ): Record<string, unknown> | undefined {
+    if (typeof target.snapshotId !== "string") return undefined;
+    const point = this.#point(target.point);
+    const snapshot = this.#snapshot(target.snapshotId, state);
+    let best: { nodeRef: string; area: number } | undefined;
+    for (const frame of snapshot.frames.values()) {
+      for (const node of frame.snapshot.nodes) {
+        if (!node.canTranslateToTop || !node.topRect) continue;
+        const rect = node.topRect;
+        if (
+          point.x < rect.x ||
+          point.y < rect.y ||
+          point.x > rect.x + rect.width ||
+          point.y > rect.y + rect.height
+        )
+          continue;
+        if (!node.actionability.visible || !node.actionability.enabled) continue;
+        const area = rect.width * rect.height;
+        if (!best || area < best.area)
+          best = { nodeRef: `f${frame.frameId}_${node.nodeRef}`, area };
+      }
+    }
+    return best
+      ? { snapshotId: target.snapshotId, nodeRef: best.nodeRef }
+      : undefined;
   }
 
   async #validateCoordinateTarget(
